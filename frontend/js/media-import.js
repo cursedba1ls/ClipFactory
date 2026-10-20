@@ -53,7 +53,7 @@ export function mediaImport({ kind, title, onChange, initial = null, compact = f
           <div class="row nowrap"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(media.title)}">${esc(media.title)}</b>
             ${media.cached ? '<span class="badge info plain">из кэша</span>' : ""}</div>
           ${mediaInfoHtml(media)}
-          ${kind === "main" && media.info && !media.info.has_audio ? `<div class="alert warn small">${icon.alert}<div>В видео нет звука: субтитры создать не получится, части будут без звука оригинала.</div></div>` : ""}
+          ${kind === "main" && media.info && !media.info.has_audio ? `<div class="alert warn small">${icon.alert}<div>В видео нет звука: субтитры создать не получится.</div></div>` : ""}
           <div><button class="btn sm" type="button" data-replace>${icon.refresh}Заменить видео</button></div>
         </div></div>`;
     $("[data-replace]", el).onclick = () => { media = null; draw(); onChange && onChange(null); };

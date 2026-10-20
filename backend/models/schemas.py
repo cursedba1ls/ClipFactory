@@ -52,6 +52,7 @@ class ProjectSettings(BaseModel):
     subtitles_enabled: bool = True
     subtitle_style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     numbering: Numbering = Field(default_factory=Numbering)
+    main_audio: bool = False  # original soundtrack in the output; off = silent parts with subtitles only
     gameplay_audio: bool = False
     gameplay_volume: float = Field(default=0.15, ge=0, le=2)
     gameplay_mode: Literal["continuous", "random"] = "continuous"

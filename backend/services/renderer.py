@@ -173,7 +173,8 @@ def render_episode(
         main_path=timeline["source_path"],
         window=window,
         fps=fps,
-        main_has_audio=bool(timeline.get("has_audio")),
+        # Speech is still recognised from the original audio; the soundtrack is kept only if enabled.
+        main_has_audio=bool(timeline.get("has_audio")) and bool(settings.get("main_audio", False)),
         gameplay_path=gp_path,
         gameplay_pieces=pieces,
         gameplay_has_audio=gp_audio,

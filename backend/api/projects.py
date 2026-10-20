@@ -95,7 +95,7 @@ def patch_project(project_id: str, body: ProjectPatch):
         old = p.get("settings") or {}
         new["seed"] = old.get("seed") or new.get("seed") or random.randint(1, 2**31 - 1)
         values["settings"] = new
-        visual_keys = ("layout", "subtitle_style", "numbering", "crop", "quality", "gameplay_audio",
+        visual_keys = ("layout", "subtitle_style", "numbering", "crop", "quality", "main_audio", "gameplay_audio",
                        "gameplay_volume", "subtitles_enabled")
         if any(new.get(k) != old.get(k) for k in visual_keys):
             db.connect().execute(

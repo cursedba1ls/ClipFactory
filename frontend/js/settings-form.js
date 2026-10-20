@@ -5,7 +5,7 @@ export const PRESETS = [
   { id: "classic", name: "TikTok Classic", sample: `<span style="font-weight:800;color:#fff;-webkit-text-stroke:1.2px #000;paint-order:stroke fill;text-shadow:0 0 2px #000">Привет всем</span>` },
   { id: "karaoke", name: "Караоке", sample: `<span style="font-weight:800;color:#fff;-webkit-text-stroke:1.2px #000;paint-order:stroke fill">Привет <span style="color:#FFE600">всем</span></span>` },
   { id: "minimal", name: "Минимализм", sample: `<span style="font-weight:500;color:#fff;text-shadow:0 1px 3px #000">Привет всем</span>` },
-  { id: "animated", name: "Анимация", sample: `<span style="font-weight:800;color:#fff;-webkit-text-stroke:1.2px #000;paint-order:stroke fill">Привет&nbsp;<span style="display:inline-block;transform:scale(1.2)">всем</span></span>` },
+  { id: "animated", name: "Анимация", sample: `<span style="font-weight:800;color:#fff;-webkit-text-stroke:1.2px #000;paint-order:stroke fill">Привет <span style="display:inline-block;margin-left:.3em;transform:scale(1.15)">всем</span></span>` },
 ];
 
 const DURATIONS = [30, 45, 60, 90];
@@ -81,12 +81,16 @@ export function settingsForm(initial, { showCaption = true, showCrop = false, sh
         </div>
       </div>
       <div class="field">
+        <label class="switch"><input type="checkbox" data-k="main_audio" ${v.main_audio ? "checked" : ""}><span class="track"></span><span>Звук оригинала</span></label>
+        <div class="small faint mt-s">Выключено — части без звука и без озвучки, только с субтитрами. Речь всё равно распознаётся из оригинала.</div>
+      </div>
+      <div class="field">
         <label class="switch"><input type="checkbox" data-k="gameplay_audio" ${v.gameplay_audio ? "checked" : ""}><span class="track"></span><span>Звук геймплея</span></label>
         <div class="slider-row mt-s ${v.gameplay_audio ? "" : "hidden"}" data-volume-wrap>
           <input type="range" min="0" max="1" step="0.05" data-k="gameplay_volume" value="${esc(v.gameplay_volume ?? 0.15)}">
           <output>${Math.round((v.gameplay_volume ?? 0.15) * 100)}%</output>
         </div>
-        <div class="small faint mt-s ${v.gameplay_audio ? "hidden" : ""}" data-muted-note>По умолчанию звук геймплея выключен — звучит только оригинал.</div>
+        <div class="small faint mt-s ${v.gameplay_audio ? "hidden" : ""}" data-muted-note>По умолчанию звук геймплея выключен.</div>
       </div>
       ${showCrop ? `
       <div class="field">
@@ -156,6 +160,7 @@ export function settingsForm(initial, { showCaption = true, showCrop = false, sh
     }
     out.numbering = { ...v.numbering, enabled: ne.checked,
       format: $('[data-k="numbering.format"]', el).value, position: $('[data-k="numbering.position"]', el).value };
+    out.main_audio = $("[data-k=main_audio]", el).checked;
     out.gameplay_audio = ga.checked;
     out.gameplay_volume = Number($("[data-k=gameplay_volume]", el).value);
     if (showCrop) {

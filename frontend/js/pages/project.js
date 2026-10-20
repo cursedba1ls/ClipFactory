@@ -74,7 +74,7 @@ export async function render(root, [projectId]) {
         ${project.main_media ? `<div class="small muted" style="margin-bottom:8px">${esc(project.main_media.title)}</div>${mediaInfoHtml(project.main_media)}` : "—"}</div>
       <div class="card"><div class="card-head"><h3>Геймплей</h3><div class="spacer"></div><button class="btn sm ghost" data-act="settings">Изменить</button></div>
         ${gps.map((g) => `<div class="row" style="justify-content:space-between"><span>${esc(g.title)}</span><span class="muted small">${fmtDuration(g.info?.duration)}${g.status !== "ready" ? " · загружается" : ""}</span></div>`).join("") || '<span class="muted">Не выбран</span>'}
-        <div class="small faint mt-s">${project.settings.gameplay_audio ? "Звук геймплея включён" : "Звук геймплея выключен"} · ${project.settings.gameplay_mode === "random" ? "случайные фрагменты" : "последовательно"} · экран ${esc(project.settings.layout)}</div>
+        <div class="small faint mt-s">${project.settings.main_audio ? "звук оригинала включён" : "без звука, только субтитры"} · ${project.settings.gameplay_audio ? "звук геймплея включён" : "звук геймплея выключен"} · ${project.settings.gameplay_mode === "random" ? "случайные фрагменты" : "последовательно"} · экран ${esc(project.settings.layout)}</div>
       </div>`;
   }
 

@@ -97,7 +97,8 @@ def series_5min(client):
     gp = upload(client, make_gameplay("gp_black.mp4", duration=12, black_head=1.0), "gameplay")
     assert gp["usable_start"] == pytest.approx(1.0, abs=0.05)
     r = client.post("/api/projects", json={"title": "Тест 5 минут", "main_media_id": main["id"],
-                                           "gameplay_media_ids": [gp["id"]], "settings": settings()})
+                                           "gameplay_media_ids": [gp["id"]],
+                                           "settings": settings(main_audio=True)})
     assert r.status_code == 200, r.text
     project = r.json()
     job = wait_job(client, project["job"]["id"])
@@ -328,6 +329,24 @@ def test_webm_ntsc_source_frame_exact(client):
         expected = [expected_luma(i) for i in range(e["start_frame"], e["end_frame"])]
         assert len(lumas) == len(expected)
         assert all(abs(a - b) <= 4 for a, b in zip(lumas, expected))
+
+
+def test_default_parts_are_silent_with_subtitles(client):
+    """By default no soundtrack/voice is kept: parts carry a silent track and burned-in subtitles only."""
+    main = upload(client, make_source("beeps_14.mp4", 14), "main")
+    gp = upload(client, make_gameplay("gameplay.mp4", duration=20), "gameplay")
+    r = client.post("/api/projects", json={"main_media_id": main["id"], "gameplay_media_ids": [gp["id"]],
+                                           "settings": {"episode_seconds": 7, "quality": "fast"}})
+    assert r.json()["settings"]["main_audio"] is False
+    job = wait_job(client, r.json()["job"]["id"])
+    assert job["status"] == "done", job
+    p = client.get(f"/api/projects/{r.json()['id']}").json()
+    assert len(p["episodes"]) == 2
+    for e in p["episodes"]:
+        assert e["cues"], "subtitles are still generated from the original speech"
+        x = audio_samples(db.get("episodes", e["id"])["video_path"])
+        assert len(x) / 48000 == pytest.approx(7.0, abs=0.05)
+        assert float(np.abs(x).max()) < 0.001  # the source beeps are not in the output
 
 
 def test_main_without_audio_gets_silent_track(client):
