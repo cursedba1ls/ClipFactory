@@ -49,7 +49,7 @@ export async function render(root, [projectId]) {
     $("#head-meta", root).innerHTML = `${badge(PROJECT_STATUS, project.status)}
       ${project.timeline ? `<span class="muted small">${fmtDuration(project.timeline.duration)} исходника</span>` : ""}
       ${c.total ? `<span class="muted small">· ${c.total} ${plural(c.total, "часть", "части", "частей")} по ${project.settings.episode_seconds} с</span>` : ""}
-      ${project.transcript_language ? `<span class="muted small">· речь: ${project.transcript_language === "ru" ? "русский" : project.transcript_language === "en" ? "английский" : esc(project.transcript_language)}</span>` : ""}`;
+      ${project.transcript_language ? `<span class="muted small">· ${project.transcript_language === "file" ? "субтитры из файла" : `речь: ${project.transcript_language === "ru" ? "русский" : project.transcript_language === "en" ? "английский" : esc(project.transcript_language)}`}</span>` : ""}`;
     const busy = project.active_jobs.length > 0;
     const b = $("#build", root);
     b.disabled = busy;

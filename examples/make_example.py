@@ -398,6 +398,7 @@ PATTERN = [(0, 9, 0.0, 6), (11.5, 5, -1.8, 3), (18.5, 4, 1.6, 3), (25, 6, 0.0, 4
            (38.5, 7, 0.0, 5)]     # (z_start, length, x_offset, width)
 PATTERN_LEN = 48.0                # SPEED * G_DUR = 240 = 5 * 48 → seamless loop
 CAM_H, FOCAL, HZ = 3.2, 620.0, 250
+RUNNER_Z = 6.0                    # runner distance from the camera (feet land around y = 580 of 720)
 
 
 def project(x, y, z):
@@ -466,11 +467,11 @@ def gameplay_frame(t):
         front = [project(xo - w / 2, 0, a0), project(xo + w / 2, 0, a0), project(xo + w / 2, -1.2, a0),
                  project(xo - w / 2, -1.2, a0)]
         d.polygon([(x * S, y * S) for x, y in front], fill=(55, 30, 90))
-    h = runner_height(cam_z + 4.0)
-    rx, ry = project(0, h, 4.0)
-    _, gy = project(0, 0, 4.0)
+    h = runner_height(cam_z + RUNNER_Z)
+    rx, ry = project(0, h, RUNNER_Z)
+    _, gy = project(0, 0, RUNNER_Z)
     d.ellipse([(rx - 40) * S, (gy - 8) * S, (rx + 40) * S, (gy + 8) * S], fill=(60, 40, 90))  # shadow
-    draw_runner(d, rx * S, ry * S, t, h > 0.05, S * 1.25)
+    draw_runner(d, rx * S, ry * S, t, h > 0.05, S * 1.05)
     # HUD: progress bar + skip button (generic obby UI)
     prog = (cam_z % PATTERN_LEN) / PATTERN_LEN
     bx0, bx1, by0, by1 = 380, 900, 22, 58

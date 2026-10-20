@@ -257,7 +257,7 @@ def render_episode(
         tmp.unlink(missing_ok=True)
         raise UserError("Проверка результата не пройдена: " + "; ".join(verify["problems"]))
     tmp.replace(paths["video"])
-    make_thumbnail(paths["video"], paths["thumb"], min(1.0, span.duration / 2))
+    make_thumbnail(paths["video"], paths["thumb"], span.duration * 0.4)
     return {
         **extra,
         "video_path": str(paths["video"]),

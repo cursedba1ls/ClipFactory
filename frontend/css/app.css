@@ -149,6 +149,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 }
 .seg button:hover { color: var(--text); }
 .seg button.on { background: var(--accent); color: #fff; }
+.seg button svg { width: 15px; height: 15px; vertical-align: -3px; margin-right: 4px; }
 
 .switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
 .switch input { display: none; }

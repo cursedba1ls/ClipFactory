@@ -29,7 +29,7 @@ MIDDLE_TEMPLATES = [
 
 
 def keywords(text: str, n: int = 2) -> list[str]:
-    words = re.findall(r"[A-Za-zА-Яа-яЁё]{5,}", text or "")
+    words = re.findall(r"[A-Za-zА-Яа-яЁё]{6,}", text or "")
     counts = Counter(w.lower() for w in words if w.lower() not in STOPWORDS)
     return [w for w, c in counts.most_common(n) if c >= 2]
 
