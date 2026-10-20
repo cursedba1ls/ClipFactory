@@ -1,6 +1,7 @@
 """Episode routes: preview files, editing, regeneration, approval, manual publication marks."""
 from __future__ import annotations
 
+import json
 import random
 
 from fastapi import APIRouter
@@ -108,8 +109,11 @@ def _enqueue_render(e: dict) -> dict:
                       (e["project_id"],), "created_at DESC")
     if active:
         ids = list(dict.fromkeys((active[0].get("payload") or {}).get("episode_ids", []) + [e["id"]]))
-        db.update("jobs", active[0]["id"], {"payload": {"episode_ids": ids}})
-        return db.get("jobs", active[0]["id"])
+        # Merge only while the job is still queued; if a worker just claimed it, create a new job.
+        cur = db.connect().execute("UPDATE jobs SET payload = ? WHERE id = ? AND status = 'queued'",
+                                   (json.dumps({"episode_ids": ids}), active[0]["id"]))
+        if cur.rowcount == 1:
+            return db.get("jobs", active[0]["id"])
     return manager.enqueue("render_episodes", project_id=e["project_id"],
                            payload={"episode_ids": [e["id"]]}, dedupe=False)
 

@@ -137,7 +137,7 @@ class TikTokClient:
     def http(self):
         if self._http is None:
             import httpx
-            self._http = httpx.Client(timeout=60)
+            self._http = httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0))
         return self._http
 
     @property

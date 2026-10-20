@@ -51,6 +51,7 @@ def validate_url(url: str) -> str:
 def safe_filename(name: str, max_len: int = 120) -> str:
     """Display-safe filename (used only for metadata/downloads, never for storage paths)."""
     name = unicodedata.normalize("NFC", name or "")
+    name = re.sub(r"\.\.+", "", name)
     name = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", name).strip(" .")
     name = re.sub(r"\s+", " ", name)
     if not name or name.upper() in {"CON", "PRN", "AUX", "NUL"} or re.fullmatch(r"(COM|LPT)\d", name.upper()):

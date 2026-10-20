@@ -81,6 +81,31 @@ async def lifespan(app: FastAPI):
         log.info("ClipFactory stopped")
 
 
+def _translate_validation(err: dict) -> str:
+    t = err.get("type", "")
+    ctx = err.get("ctx") or {}
+    table = {
+        "missing": "обязательное поле",
+        "literal_error": "недопустимое значение",
+        "enum": "недопустимое значение",
+        "string_too_long": f"слишком длинное значение (максимум {ctx.get('max_length')})",
+        "string_too_short": "слишком короткое значение",
+        "string_pattern_mismatch": "неверный формат",
+        "too_long": "слишком много элементов",
+        "greater_than_equal": f"значение должно быть не меньше {ctx.get('ge')}",
+        "less_than_equal": f"значение должно быть не больше {ctx.get('le')}",
+        "greater_than": f"значение должно быть больше {ctx.get('gt')}",
+        "less_than": f"значение должно быть меньше {ctx.get('lt')}",
+        "float_parsing": "нужно число",
+        "int_parsing": "нужно целое число",
+        "bool_parsing": "нужно да/нет",
+        "json_invalid": "некорректный JSON",
+    }
+    if t == "value_error":
+        return str(ctx.get("error") or err.get("msg"))
+    return table.get(t, str(err.get("msg")))
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="ClipFactory", version=config.APP_VERSION, lifespan=lifespan,
                   docs_url=None, redoc_url=None)
@@ -108,7 +133,8 @@ def create_app() -> FastAPI:
         parts = []
         for err in exc.errors()[:5]:
             loc = ".".join(str(x) for x in err.get("loc", []) if x not in ("body", "query"))
-            parts.append(f"{loc}: {err.get('msg')}" if loc else str(err.get("msg")))
+            msg = _translate_validation(err)
+            parts.append(f"{loc}: {msg}" if loc else msg)
         return JSONResponse({"detail": "Некорректные данные — " + "; ".join(parts)}, status_code=422)
 
     from backend.api import episodes, jobs, media, projects, publish, system

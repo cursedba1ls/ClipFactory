@@ -365,7 +365,8 @@ def render_many(project: dict, episodes: list[dict], timeline: dict, ctx: JobCon
                 fractions[e["id"]] = 1.0
             log.warning("episode %s failed: %s %s", e["id"], exc.message, (exc.detail or "")[-800:])
             return
-        db.update("episodes", e["id"], {**result, "status": "ready", "error": None,
+        # A freshly rendered video has not been reviewed yet: approval is never carried over.
+        db.update("episodes", e["id"], {**result, "status": "ready", "error": None, "approved": 0,
                                         "rendered_at": db.now(), "updated_at": db.now()})
         with lock:
             fractions[e["id"]] = 1.0
