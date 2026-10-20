@@ -154,3 +154,28 @@ def test_bigword_preset_is_default_and_short():
     assert all(1 <= len(c["words"]) <= 2 for c in cues)
     ass = sg.build_ass(cues, None, {"enabled": False}, 1, 1, 60, 960)
     assert "Style: Sub,Arial Black,124" in ass and "\\pos(540,960)" in ass
+
+
+def test_parse_srt_and_vtt():
+    from backend.services.subtitle_import import cues_to_words, parse_subtitles
+    srt = "1\n00:00:01,000 --> 00:00:02,500\n<i>Привет,</i> друг!\n\n2\n00:00:03,000 --> 00:00:05,000\nКак дела?\nВсё хорошо\n"
+    cues = parse_subtitles(srt)
+    assert cues == [{"start": 1.0, "end": 2.5, "text": "Привет, друг!"},
+                    {"start": 3.0, "end": 5.0, "text": "Как дела? Всё хорошо"}]
+    vtt = "WEBVTT\n\n00:01.000 --> 00:02.000\nHello\n\n01:00:00.500 --> 01:00:01.000 align:start\n{\\an8}Bye\n"
+    assert parse_subtitles(vtt) == [{"start": 1.0, "end": 2.0, "text": "Hello"}, {"start": 3600.5, "end": 3601.0, "text": "Bye"}]
+    words = cues_to_words(cues)
+    assert [w["text"] for w in words] == ["Привет,", "друг!", "Как", "дела?", "Всё", "хорошо"]
+    assert words[0]["start"] == 1.0 and words[-1]["end"] == pytest.approx(5.0)
+
+
+def test_external_subtitles_encoding_cp1251():
+    from backend.services import subtitle_import
+    raw = "1\n00:00:00,500 --> 00:00:01,500\nЗакатун смотрит на закат\n".encode("cp1251")
+    data = subtitle_import.save_external("abc123", "z.srt", raw)
+    assert data["cues"][0]["text"] == "Закатун смотрит на закат"
+    assert subtitle_import.load_external("abc123")["filename"] == "z.srt"
+    subtitle_import.remove_external("abc123")
+    assert subtitle_import.load_external("abc123") is None
+    with pytest.raises(Exception):
+        subtitle_import.save_external("abc123", "z.srt", b"no cues here")

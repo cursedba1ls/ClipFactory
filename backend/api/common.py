@@ -12,7 +12,7 @@ from backend.jobs.queue import job_title
 from backend.services import downloader, renderer
 
 INFO_FIELDS = ("duration", "video_duration", "width", "height", "fps", "is_vfr", "has_audio", "video_codec",
-               "audio_codec", "size", "nb_frames", "container")
+               "audio_codec", "size", "nb_frames", "container", "content_box", "focus")
 
 
 def not_found(what: str = "Объект") -> HTTPException:
@@ -71,6 +71,7 @@ def episode_out(e: dict, total: int, project_title: str | None = None) -> dict:
         "start_time": e["start_time"], "end_time": e["end_time"], "duration": e["duration"],
         "status": e["status"], "subtitle_status": e["subtitle_status"], "error": e.get("error"),
         "cues": e.get("cues") or [], "overrides": e.get("overrides") or {}, "gameplay": e.get("gameplay"),
+        "auto_crop": e.get("auto_crop"),
         "verify": e.get("verify"), "approved": bool(e["approved"]),
         "caption": e.get("caption") or "", "hashtags": e.get("hashtags") or "",
         "publish_status": e["publish_status"], "publish_info": e.get("publish_info") or {},

@@ -1,5 +1,6 @@
 // Episode editor modal: subtitle text/timing, style, crop, gameplay, numbering → save and re-render one part.
 import { api } from "./api.js";
+import { cropEditor } from "./crop-editor.js";
 import { PRESETS } from "./settings-form.js";
 import { $, $$, esc, fmtDuration, icon, modal, toast, toastError } from "./ui.js";
 
@@ -182,31 +183,31 @@ export async function openEditor(episodeId, onSaved) {
   }
 
   // ---------- crop ----------
+  let cropEd = null;
+  let cropStart = null;
   function drawCrop() {
     const pane = $('[data-pane="crop"]', body);
-    const slider = (k, label) => `<label class="field"><span>${label}</span><div class="slider-row">
-      <input type="range" min="0" max="1" step="0.01" data-c="${k}" value="${crop[k]}"><output>${Math.round(crop[k] * 100)}%</output></div></label>`;
+    const src = ep.crop_sources || {};
     pane.innerHTML = `
-      <div class="field" style="margin-bottom:16px"><span class="field-label">Разделение экрана</span>
+      <div class="field" style="margin-bottom:14px"><span class="field-label">Разделение экрана</span>
         <div class="seg" data-layout>${["50/50", "55/45", "60/40"].map((l) => `<button type="button" data-v="${l}" class="${l === layout ? "on" : ""}">${l}</button>`).join("")}</div></div>
-      <div class="form-grid">
-        ${slider("main_x", "Мультфильм: по горизонтали (0% — левый край, 100% — правый)")}
-        ${slider("main_y", "Мультфильм: по вертикали")}
-        ${slider("game_x", "Геймплей: по горизонтали")}
-        ${slider("game_y", "Геймплей: по вертикали")}
-      </div>
-      <div class="small faint mt">Видео масштабируется без искажений и обрезается по краям, чтобы не было чёрных полос. Ползунки задают, какая часть кадра останется видна.</div>`;
-    $$("[data-c]", pane).forEach((r) => r.oninput = () => {
-      touched.crop = true;
-      crop[r.dataset.c] = Number(r.value);
-      r.parentElement.querySelector("output").textContent = `${Math.round(r.value * 100)}%`;
+      <div data-crop-host></div>`;
+    const r = eff.crop_resolved || {};
+    cropEd = cropEditor({
+      main: src.main, game: src.game, layout,
+      crop: { ...r, mode: crop.mode || "auto" },
+      auto: { main_x: src.main?.auto?.x, main_y: src.main?.auto?.y, game_x: src.game?.auto?.x, game_y: src.game?.auto?.y },
+      hint: "Видео масштабируется без искажений. Рамка показывает, что попадёт в кадр этой части.",
     });
+    $("[data-crop-host]", pane).appendChild(cropEd.el);
+    cropStart = JSON.stringify(cropEd.getValue());
     $("[data-layout]", pane).onclick = (e) => {
       const b = e.target.closest("button");
       if (!b) return;
       touched.crop = true;
       layout = b.dataset.v;
       $$("[data-layout] button", pane).forEach((x) => x.classList.toggle("on", x === b));
+      cropEd.setLayout(layout);
     };
   }
 
@@ -282,7 +283,9 @@ export async function openEditor(episodeId, onSaved) {
         uppercase: st.uppercase, max_words: st.max_words,
       };
     }
-    if (touched.crop) { overrides.crop = crop; overrides.layout = layout; }
+    const cropNow = cropEd ? cropEd.getValue() : null;
+    if (cropNow && JSON.stringify(cropNow) !== cropStart) { overrides.crop = cropNow; overrides.layout = layout; }
+    else if (touched.crop) { overrides.layout = layout; }
     if (touched.numbering) {
       if (!nb.format.includes("{n}")) return toastError(new Error("Текст нумерации должен содержать {n}."));
       overrides.numbering = nb;

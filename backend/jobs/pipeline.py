@@ -16,7 +16,7 @@ from backend.errors import Cancelled, UserError
 from backend.jobs.queue import JobContext, register
 from backend.services import (
     captions, downloader, encoders, ffmpeg_utils, gameplay_manager, publisher, renderer,
-    settings_store, subtitle_generator, video_analyzer, video_splitter,
+    settings_store, smart_crop, subtitle_generator, subtitle_import, video_analyzer, video_splitter,
 )
 
 log = logging.getLogger(__name__)
@@ -65,9 +65,13 @@ def process_media(media_id: str, ctx: JobContext | None, p0: float = 0, p1: floa
                        message=f"Анализ {kind_name}…", force=True)
         info = video_analyzer.analyze(path)
         values = {"info": info, "status": "ready", "error": None}
+        us, ue = 0.0, None
         if media["kind"] == "gameplay":
             us, ue = video_analyzer.detect_black_edges(path, info["video_duration"])
             values.update({"usable_start": us, "usable_end": ue})
+        if ctx:
+            ctx.update(message=f"Поиск чёрных полос и области действия ({kind_name})…")
+        info.update(smart_crop.analyze_media(path, info, media["kind"], us, ue))
         db.update("media", media_id, values)
     except Cancelled:
         db.update("media", media_id, {"status": "pending"})
@@ -143,6 +147,7 @@ def prepare_timeline(project: dict, media: dict, ctx: JobContext, p0: float, p1:
         "has_audio": bool(info.get("has_audio")),
         "width": info["width"],
         "height": info["height"],
+        "content_box": (media.get("info") or {}).get("content_box"),
     }
     db.update("projects", project["id"], {"timeline": timeline, "updated_at": db.now()})
     return timeline
@@ -196,6 +201,23 @@ def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: 
         db.connect().execute("UPDATE episodes SET subtitle_status = 'disabled' WHERE project_id = ?",
                              (project["id"],))
         return None
+    rebuild_states = ("none", "disabled", "auto", "empty") if rebuild else ("none", "disabled")
+    external = subtitle_import.load_external(project["main_media_id"]) if project.get("main_media_id") else None
+    if external:
+        # A subtitle file replaces speech recognition. Its times count from the start of the file;
+        # the episode timeline starts at the first video frame.
+        ctx.update(stage="Распознавание речи", progress=p1,
+                   message=f"Субтитры из файла «{external.get('filename', '')}» — распознавание не нужно", force=True)
+        offset = -float(timeline.get("t0") or 0.0)
+        transcript = {"language": None, "model": "file", "source": "file", "segments": [],
+                      "words": [{**w, "start": round(w["start"] + offset, 3), "end": round(w["end"] + offset, 3)}
+                                for w in external["words"]]}
+        tpath = renderer.project_dir(project["id"]) / "transcript.json"
+        subtitle_generator.save_json(tpath, transcript)
+        db.update("projects", project["id"], {"transcript_path": str(tpath), "transcript_language": "file"})
+        pending = [e for e in episodes if e["subtitle_status"] in rebuild_states or force]
+        _assign_cues(project, episodes, transcript, pending)
+        return transcript
     if not timeline.get("has_audio"):
         _add_warning(project["id"], "В основном видео нет звуковой дорожки — субтитры не созданы, "
                                     "в части добавлена тишина.")
@@ -206,7 +228,6 @@ def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: 
     language = settings.get("language", "auto")
     lang = None if language == "auto" else language
     tpath = renderer.project_dir(project["id"]) / "transcript.json"
-    rebuild_states = ("none", "disabled", "auto", "empty") if rebuild else ("none", "disabled")
     pending = [e for e in episodes if e["subtitle_status"] in rebuild_states or force]
     if tpath.is_file() and not force:
         transcript = json.loads(tpath.read_text(encoding="utf-8"))
@@ -248,6 +269,12 @@ def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: 
                                               "transcript_language": transcript.get("language")})
         pending = [e for e in episodes if e["subtitle_status"] in rebuild_states or force]
 
+    _assign_cues(project, episodes, transcript, pending)
+    return transcript
+
+
+def _assign_cues(project: dict, episodes: list[dict], transcript: dict, pending: list[dict]) -> None:
+    settings = project["settings"]
     words = transcript["words"]
     n = len(episodes)
     for e in pending:
@@ -255,7 +282,6 @@ def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: 
                                                    e["idx"] == n - 1, settings.get("subtitle_style"))
         db.update("episodes", e["id"], {"cues": cues, "subtitle_status": "auto" if cues else "empty",
                                         "status": "pending", "updated_at": db.now()})
-    return transcript
 
 
 def ensure_captions(project: dict, episodes: list[dict], transcript: dict | None, force: bool = False) -> None:
@@ -271,6 +297,16 @@ def ensure_captions(project: dict, episodes: list[dict], transcript: dict | None
             "caption": captions.make_caption(e["idx"] + 1, n, settings.get("caption_title", "")),
             "hashtags": captions.make_hashtags(app.default_hashtags, settings.get("hashtags", ""), text),
         })
+
+
+def ensure_auto_crop(project: dict, timeline: dict, episodes: list[dict], ctx: JobContext,
+                     p0: float, p1: float) -> None:
+    todo = [e for e in episodes if renderer.auto_crop_needed(project, e)]
+    for i, e in enumerate(todo):
+        ctx.check()
+        ctx.update(stage="Автокадрирование", progress=p0 + (p1 - p0) * i / max(1, len(todo)),
+                   message=f"Поиск главного действия: часть {e['idx'] + 1} из {len(episodes)}")
+        db.update("episodes", e["id"], {"auto_crop": renderer.compute_auto_crop(project, e, timeline)})
 
 
 def project_gameplay_clips(project: dict) -> list[dict]:
@@ -439,6 +475,10 @@ def job_build_series(ctx: JobContext) -> None:
         episodes = db.query("episodes", "project_id = ?", (pid,), "idx")
         ensure_captions(project, episodes, transcript)
         ctx.check()
+
+        # 5b. Automatic framing of the cartoon for every part
+        ensure_auto_crop(db.get("projects", pid), timeline, episodes, ctx, 45, 47)
+        episodes = db.query("episodes", "project_id = ?", (pid,), "idx")
 
         # 6. Gameplay
         ctx.update(stage="Подготовка геймплея", progress=45, message="Подбор фрагментов геймплея…", force=True)

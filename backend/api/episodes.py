@@ -35,6 +35,34 @@ def get_episode(episode_id: str):
     out["effective"] = renderer.effective_options(p.get("settings") or {}, e.get("overrides"))
     out["effective"]["subtitle_style"] = subtitle_generator.resolve_style(out["effective"]["subtitle_style"])
     out["effective"]["numbering"] = subtitle_generator.resolve_numbering(out["effective"]["numbering"])
+    gp = db.get("media", (e.get("gameplay") or {}).get("media_id") or "") if e.get("gameplay") else None
+    out["effective"]["crop_resolved"] = renderer.resolve_crop(out["effective"], e, gp)
+    out["crop_sources"] = crop_sources(p, e, gp)
+    return out
+
+
+def media_dims(media: dict | None) -> dict | None:
+    info = (media or {}).get("info") or {}
+    if not info:
+        return None
+    box = info.get("content_box")
+    return {"w": box["w"], "h": box["h"]} if box else {"w": info["width"], "h": info["height"]}
+
+
+def crop_sources(project: dict, e: dict, gp: dict | None) -> dict:
+    """Frames and picture sizes for the visual crop editor."""
+    main = db.get("media", project.get("main_media_id") or "")
+    t0 = float((project.get("timeline") or {}).get("t0") or 0)
+    out = {"main": None, "game": None}
+    if main and main["status"] == "ready":
+        t = t0 + float(e["start_time"]) + float(e["duration"]) / 2
+        ac = e.get("auto_crop") or {}
+        out["main"] = {"url": f"/api/media/{main['id']}/frame?t={t:.1f}", "dims": media_dims(main),
+                       "auto": {"x": ac.get("main_x", 0.5), "y": ac.get("main_y", 0.5)}}
+    if gp and gp["status"] == "ready":
+        t = float(gp.get("usable_start") or 0) + float((e.get("gameplay") or {}).get("offset") or 0) + 1
+        out["game"] = {"url": f"/api/media/{gp['id']}/frame?t={t:.1f}", "dims": media_dims(gp),
+                       "auto": (gp.get("info") or {}).get("focus") or {"x": 0.5, "y": 0.5}}
     return out
 
 

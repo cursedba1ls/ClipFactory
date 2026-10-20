@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     cues TEXT NOT NULL DEFAULT '[]',
     overrides TEXT NOT NULL DEFAULT '{}',
     gameplay TEXT,
+    auto_crop TEXT,
     video_path TEXT,
     thumb_path TEXT,
     verify TEXT,
@@ -109,7 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 JSON_FIELDS = {
     "media": {"info"},
     "projects": {"gameplay_media_ids", "settings", "timeline", "warnings"},
-    "episodes": {"cues", "overrides", "gameplay", "verify", "publish_info"},
+    "episodes": {"cues", "overrides", "gameplay", "auto_crop", "verify", "publish_info"},
     "jobs": {"payload"},
 }
 
@@ -152,9 +153,17 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+MIGRATIONS = [("episodes", "auto_crop", "TEXT")]
+
+
 def init_db() -> None:
     with _init_lock:
-        connect().executescript(SCHEMA)
+        conn = connect()
+        conn.executescript(SCHEMA)
+        for table, column, decl in MIGRATIONS:  # columns added after the first release
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 @contextmanager

@@ -349,6 +349,27 @@ def test_default_parts_are_silent_with_subtitles(client):
         assert float(np.abs(x).max()) < 0.001  # the source beeps are not in the output
 
 
+def test_subtitle_file_replaces_recognition(client):
+    """A silent cartoon (no voice) with an .srt file: subtitles come from the file, no recognition runs."""
+    main = upload(client, make_source("silent_toon.mp4", 12, audio=False), "main")
+    gp = upload(client, make_gameplay("gameplay.mp4", duration=20), "gameplay")
+    srt = "1\n00:00:01,000 --> 00:00:03,000\nЗакатун смотрит на закат\n\n2\n00:00:07,000 --> 00:00:09,000\nКакое красивое небо\n"
+    r = client.post(f"/api/media/{main['id']}/subtitles?filename=zakatun.srt", content=srt.encode())
+    assert r.json() == {"filename": "zakatun.srt", "cues": 2}
+    assert client.get(f"/api/media/{main['id']}").json()["subtitles_file"]["cues"] == 2
+    calls = len(TRANSCRIBE_CALLS)
+    r = client.post("/api/projects", json={"main_media_id": main["id"], "gameplay_media_ids": [gp["id"]],
+                                           "settings": {"episode_seconds": 6, "quality": "fast"}})
+    job = wait_job(client, r.json()["job"]["id"])
+    assert job["status"] == "done", job
+    assert len(TRANSCRIBE_CALLS) == calls
+    p = client.get(f"/api/projects/{r.json()['id']}").json()
+    texts = [[c["text"] for c in e["cues"]] for e in p["episodes"]]
+    assert texts == [["Закатун смотрит", "на закат"], ["Какое красивое", "небо"]]  # 1–2 words per cue
+    assert p["episodes"][1]["cues"][0]["start"] == pytest.approx(1.0, abs=0.01)  # 7 s − 6 s
+    assert "Закатун" in client.get(p["episodes"][0]["ass_url"]).text
+
+
 def test_main_without_audio_gets_silent_track(client):
     main = upload(client, make_source("noaudio.mp4", 12, audio=False), "main")
     gp = upload(client, make_gameplay("gameplay.mp4", duration=20), "gameplay")

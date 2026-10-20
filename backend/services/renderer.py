@@ -9,7 +9,9 @@ from typing import Callable
 
 from backend import config
 from backend.errors import UserError
-from backend.services import encoders, ffmpeg_utils, gameplay_manager, subtitle_generator, video_composer
+from backend.services import (
+    encoders, ffmpeg_utils, gameplay_manager, smart_crop, subtitle_generator, video_composer,
+)
 from backend.services.video_splitter import EpisodeSpan, cut_window
 
 log = logging.getLogger(__name__)
@@ -55,6 +57,43 @@ def effective_options(settings: dict, overrides: dict | None) -> dict:
     crop.update(ov.get("crop") or {})
     layout = ov.get("layout") or settings.get("layout") or "50/50"
     return {"subtitle_style": style, "numbering": numbering, "crop": crop, "layout": layout}
+
+
+def _auto_key(opts: dict) -> dict:
+    return {"layout": opts["layout"], "zoom": float(opts["crop"].get("main_zoom") or 1.0)}
+
+
+def auto_crop_needed(project: dict, episode: dict) -> bool:
+    opts = effective_options(project["settings"], episode.get("overrides"))
+    if opts["crop"].get("mode", "auto") != "auto":
+        return False
+    ac = episode.get("auto_crop") or {}
+    return "main_x" not in ac or any(ac.get(k) != v for k, v in _auto_key(opts).items())
+
+
+def compute_auto_crop(project: dict, episode: dict, timeline: dict) -> dict:
+    """Where the action is in this part of the cartoon (crop window position)."""
+    opts = effective_options(project["settings"], episode.get("overrides"))
+    top_h, _ = video_composer.layout_heights(opts["layout"])
+    f = smart_crop.focus(timeline["source_path"], float(timeline.get("t0") or 0) + float(episode["start_time"]),
+                         float(episode["duration"]), int(timeline["width"]), int(timeline["height"]),
+                         config.OUTPUT_WIDTH, top_h, timeline.get("content_box"),
+                         float(opts["crop"].get("main_zoom") or 1.0))
+    return {"main_x": f["x"], "main_y": f["y"], **_auto_key(opts)}
+
+
+def resolve_crop(opts: dict, episode: dict, gameplay_media: dict | None) -> dict:
+    """Final crop fractions/zooms: manual values, or automatic ones (per-part focus, gameplay focus)."""
+    crop = {"main_x": 0.5, "main_y": 0.5, "main_zoom": 1.0, "game_x": 0.5, "game_y": 0.5, "game_zoom": 1.0}
+    crop.update({k: v for k, v in opts["crop"].items() if v is not None})
+    if crop.get("mode", "auto") == "auto":
+        ac = episode.get("auto_crop") or {}
+        crop["main_x"] = ac.get("main_x", 0.5)
+        crop["main_y"] = ac.get("main_y", 0.5)
+        gf = ((gameplay_media or {}).get("info") or {}).get("focus") or {}
+        crop["game_x"] = gf.get("x", 0.5)
+        crop["game_y"] = gf.get("y", 0.5)
+    return crop
 
 
 def write_subtitle_files(project: dict, episode: dict, total: int) -> tuple[Path, Path]:
@@ -151,6 +190,10 @@ def render_episode(
     window = cut_window(span, fps, float(timeline.get("t0") or 0.0))
     paths = episode_paths(project["id"], episode["idx"], total)
     ass_path, _ = write_subtitle_files(project, episode, total)
+    extra: dict = {}
+    if auto_crop_needed(project, episode):
+        episode = {**episode, "auto_crop": compute_auto_crop(project, episode, timeline)}
+        extra["auto_crop"] = episode["auto_crop"]
 
     audio_rel = timeline.get("audio_t0")
     audio_delay = 0.0
@@ -181,7 +224,9 @@ def render_episode(
         gameplay_audio=bool(settings.get("gameplay_audio")),
         gameplay_volume=float(settings.get("gameplay_volume", 0.15)),
         layout=opts["layout"],
-        crop=opts["crop"],
+        crop=resolve_crop(opts, episode, gameplay_media),
+        main_box=timeline.get("content_box"),
+        game_box=((gameplay_media or {}).get("info") or {}).get("content_box") if gp_path else None,
         divider=bool(settings.get("divider", True)),
         ass_relpath=ass_path.relative_to(config.STORAGE).as_posix(),
         fontsdir_relpath=_fontsdir(),
@@ -214,6 +259,7 @@ def render_episode(
     tmp.replace(paths["video"])
     make_thumbnail(paths["video"], paths["thumb"], min(1.0, span.duration / 2))
     return {
+        **extra,
         "video_path": str(paths["video"]),
         "thumb_path": str(paths["thumb"]) if paths["thumb"].is_file() else None,
         "verify": verify,

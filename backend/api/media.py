@@ -13,7 +13,9 @@ from backend.database import db
 from backend.errors import UserError
 from backend.jobs.queue import manager
 from backend.models.schemas import MediaPatch, MediaUrlIn
-from backend.services import downloader, settings_store, video_analyzer, video_splitter
+from backend.services import (
+    downloader, settings_store, smart_crop, subtitle_import, video_analyzer, video_splitter,
+)
 
 router = APIRouter(prefix="/api/media", tags=["media"])
 
@@ -31,6 +33,8 @@ def get_media(media_id: str):
     jobs = db.query("jobs", "media_id = ? AND status IN ('queued','running')", (media_id,), "created_at DESC")
     out = media_out(m)
     out["job"] = job_out(jobs[0]) if jobs else None
+    ext = subtitle_import.load_external(media_id)
+    out["subtitles_file"] = {"filename": ext["filename"], "cues": len(ext["cues"])} if ext else None
     return out
 
 
@@ -90,9 +94,11 @@ async def upload(request: Request, kind: str = Query(pattern="^(main|gameplay)$"
         "original_name": downloader.safe_filename(filename), "path": str(dest), "status": "ready",
         "info": info, "created_at": db.now(),
     }
+    us, ue = 0.0, None
     if kind == "gameplay":
         us, ue = await run_in_threadpool(video_analyzer.detect_black_edges, dest, info["video_duration"])
         values.update({"usable_start": us, "usable_end": ue})
+    info.update(await run_in_threadpool(smart_crop.analyze_media, dest, info, kind, us, ue))
     m = db.insert("media", values)
     return media_out(m)
 
@@ -126,6 +132,64 @@ def delete_media(media_id: str):
 def media_file(media_id: str):
     m = get_or_404("media", media_id, "Видео")
     return safe_file_response(m.get("path"), "video/mp4")
+
+
+def frame_path(media: dict, t: float, width: int = 640) -> Path:
+    """JPEG frame of the picture area (black bars removed) — used by the visual crop editor."""
+    info = media.get("info") or {}
+    t = max(0.0, min(float(t), float(info.get("video_duration") or 0) - 0.1))
+    out = config.DIRS["temp"] / "frames" / f"{media['id']}_{int(t * 10)}_{width}.jpg"
+    if out.is_file():
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    vf = []
+    box = info.get("content_box")
+    if box:
+        vf.append(f"crop={box['w']}:{box['h']}:{box['x']}:{box['y']}")
+    vf.append(f"scale={width}:-2")
+    from backend.services import ffmpeg_utils
+    ffmpeg_utils.run_ffmpeg(["-ss", ffmpeg_utils.fmt_time(t), "-i", media["path"], "-frames:v", "1",
+                             "-vf", ",".join(vf), "-q:v", "3", str(out)],
+                            error_message="Не удалось получить кадр из видео.")
+    return out
+
+
+@router.post("/{media_id}/subtitles")
+async def upload_subtitles(media_id: str, request: Request, filename: str = Query(max_length=300)):
+    """Attach a ready .srt/.vtt file to the main video: used instead of speech recognition."""
+    m = get_or_404("media", media_id, "Видео")
+    if m["kind"] != "main":
+        raise UserError("Субтитры можно прикрепить только к основному видео.")
+    if Path(filename).suffix.lower() not in (".srt", ".vtt"):
+        raise UserError("Поддерживаются файлы субтитров .srt и .vtt.")
+    raw = await request.body()
+    data = await run_in_threadpool(subtitle_import.save_external, media_id, filename, raw)
+    _invalidate_subtitles(media_id)
+    return {"filename": data["filename"], "cues": len(data["cues"])}
+
+
+@router.delete("/{media_id}/subtitles")
+def delete_subtitles(media_id: str):
+    get_or_404("media", media_id, "Видео")
+    subtitle_import.remove_external(media_id)
+    _invalidate_subtitles(media_id)
+    return {"ok": True}
+
+
+def _invalidate_subtitles(media_id: str) -> None:
+    """Projects using this video regenerate their (non-edited) subtitles on the next build."""
+    for p in db.query("projects", "main_media_id = ?", (media_id,)):
+        db.connect().execute(
+            "UPDATE episodes SET subtitle_status = 'none', status = CASE WHEN status = 'ready' THEN 'outdated' "
+            "ELSE status END WHERE project_id = ? AND subtitle_status != 'edited'", (p["id"],))
+
+
+@router.get("/{media_id}/frame")
+def media_frame(media_id: str, t: float = Query(0, ge=0), w: int = Query(640, ge=64, le=1280)):
+    m = get_or_404("media", media_id, "Видео")
+    if m["status"] != "ready":
+        raise UserError("Видео ещё не загружено.")
+    return safe_file_response(str(frame_path(m, t, w)), "image/jpeg")
 
 
 @router.get("/{media_id}/plan")

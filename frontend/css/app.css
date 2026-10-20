@@ -413,3 +413,16 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   .cue .btn:last-child { display: none; }
   .q-item { grid-template-columns: 1fr; }
 }
+
+/* ---------- crop editor ---------- */
+.crop-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 190px; gap: 18px; align-items: start; }
+.crop-stage { position: relative; overflow: hidden; border-radius: 10px; background: #000; cursor: crosshair; touch-action: none; user-select: none; }
+.crop-stage img { width: 100%; display: block; pointer-events: none; }
+.crop-stage.empty { cursor: default; }
+.crop-rect {
+  position: absolute; border: 2px solid var(--accent); border-radius: 4px; cursor: grab;
+  box-shadow: 0 0 0 9999px rgba(8, 9, 12, .62); transition: left .08s, top .08s;
+}
+.crop-rect.auto { border-style: dashed; border-color: var(--ok); }
+.crop-canvas { width: 100%; aspect-ratio: 9 / 16; border-radius: 12px; background: #000; display: block; }
+@media (max-width: 960px) { .crop-grid { grid-template-columns: 1fr; } .crop-canvas { max-width: 220px; } }

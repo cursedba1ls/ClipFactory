@@ -52,9 +52,26 @@ class EpisodeRenderSpec:
     ass_relpath: str | None = None  # relative to the ffmpeg working directory
     fontsdir_relpath: str | None = None
     divider: bool = False  # thin black line on the split
+    main_box: dict | None = None  # content area without black bars {x, y, w, h}
+    game_box: dict | None = None
     audio_delay: float = 0.0  # seconds of silence before main audio (stream start offset)
     width: int = config.OUTPUT_WIDTH
     height: int = config.OUTPUT_HEIGHT
+
+
+def _even(v: float) -> int:
+    return max(2, int(round(v / 2)) * 2)
+
+
+def fit_chain(box: dict | None, w: int, h: int, zoom: float, fx: float, fy: float) -> str:
+    """Remove black bars, cover-scale (optionally zoomed) without distortion, crop to w×h at (fx, fy)."""
+    parts = []
+    if box:
+        parts.append(f"crop={int(box['w'])}:{int(box['h'])}:{int(box['x'])}:{int(box['y'])}")
+    z = max(1.0, min(3.0, float(zoom or 1.0)))
+    parts.append(f"scale={_even(w * z)}:{_even(h * z)}:force_original_aspect_ratio=increase:flags=bicubic")
+    parts.append(f"crop={w}:{h}:(iw-ow)*{fx:.4f}:(ih-oh)*{fy:.4f}")
+    return ",".join(parts)
 
 
 def _ass_filter(spec: EpisodeRenderSpec) -> str:
@@ -96,10 +113,8 @@ def build_filter_and_inputs(spec: EpisodeRenderSpec) -> tuple[list[str], str, st
     )
     if out_fps != spec.fps:
         top += f",fps={fps_str}"
-    top += (
-        f",scale={w}:{top_h}:force_original_aspect_ratio=increase:flags=bicubic,"
-        f"crop={w}:{top_h}:(iw-ow)*{cx:.4f}:(ih-oh)*{cy:.4f},setsar=1,format=yuv420p[top]"
-    )
+    top += "," + fit_chain(spec.main_box, w, top_h, spec.crop.get("main_zoom", 1.0), cx, cy)
+    top += ",setsar=1,format=yuv420p[top]"
     chains.append(top)
 
     use_game_audio = spec.gameplay_audio and spec.gameplay_has_audio
@@ -108,8 +123,9 @@ def build_filter_and_inputs(spec: EpisodeRenderSpec) -> tuple[list[str], str, st
         for n, piece in enumerate(spec.gameplay_pieces):
             inputs += ["-ss", fmt_time(piece.start), "-t", fmt_time(piece.duration), "-i", spec.gameplay_path]
             chains.append(
-                f"[{idx}:v:0]fps={fps_str},scale={w}:{bot_h}:force_original_aspect_ratio=increase:flags=bicubic,"
-                f"crop={w}:{bot_h}:(iw-ow)*{gx:.4f}:(ih-oh)*{gy:.4f},setsar=1,format=yuv420p[gv{n}]"
+                f"[{idx}:v:0]fps={fps_str},"
+                + fit_chain(spec.game_box, w, bot_h, spec.crop.get("game_zoom", 1.0), gx, gy)
+                + f",setsar=1,format=yuv420p[gv{n}]"
             )
             piece_labels.append(f"[gv{n}]")
             if use_game_audio:

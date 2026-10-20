@@ -1,5 +1,6 @@
 import { api } from "../api.js";
 import { openEditor } from "../editor.js";
+import { cropEditor, focusOf, sourceFromMedia } from "../crop-editor.js";
 import { settingsForm } from "../settings-form.js";
 import {
   $, $$, badge, confirmDialog, EPISODE_STATUS, esc, fmtDuration, fmtSecondsShort, icon, jobPanel, mediaInfoHtml,
@@ -237,7 +238,7 @@ export async function render(root, [projectId]) {
   async function openSettings() {
     const library = await api.get("/api/media?kind=gameplay");
     const selected = new Set(project.gameplay_media_ids);
-    const form = settingsForm(project.settings, { showCaption: true, showCrop: true, showAdvanced: true });
+    const form = settingsForm(project.settings, { showCaption: true, showAdvanced: true });
     const wrap = document.createElement("div");
     wrap.innerHTML = `<div class="field-label" style="margin-bottom:8px">Геймплей проекта</div>
       <div class="lib-list" style="margin-bottom:20px">${library.filter((g) => g.status === "ready").map((g) => `
@@ -245,10 +246,31 @@ export async function render(root, [projectId]) {
         <video src="${esc(g.file_url)}#t=1" preload="metadata" muted></video>
         <div class="grow"><div class="t">${esc(g.title)}</div><div class="small muted">${fmtDuration(g.info?.duration)}</div></div></div>`).join("")}</div>`;
     wrap.appendChild(form.el);
+    const cropWrap = document.createElement("div");
+    cropWrap.className = "mt";
+    cropWrap.innerHTML = `<h3 style="margin:18px 0 10px">Кадрирование</h3>`;
+    wrap.appendChild(cropWrap);
+    let cropEd = null;
+    const buildCrop = () => {
+      const gpMedia = library.find((g) => selected.has(g.id));
+      const mainMedia = project.main_media;
+      const s = form.getValue();
+      cropEd?.el.remove();
+      cropEd = cropEditor({
+        main: sourceFromMedia(mainMedia), game: sourceFromMedia(gpMedia, 0.1), layout: s.layout,
+        crop: project.settings.crop || {}, divider: s.divider,
+        auto: { main_x: focusOf(mainMedia).x, main_y: focusOf(mainMedia).y, game_x: focusOf(gpMedia).x, game_y: focusOf(gpMedia).y },
+        hint: "В автоматическом режиме положение рамки подбирается отдельно для каждой части. «Вручную» — одно положение для всех частей (отдельную часть можно поправить в её редакторе).",
+      });
+      cropWrap.appendChild(cropEd.el);
+    };
+    buildCrop();
+    form.el.addEventListener("change-settings", () => { const s = form.getValue(); cropEd.setLayout(s.layout); cropEd.setDivider(s.divider); });
     $$("[data-gid]", wrap).forEach((it) => it.onclick = () => {
       const id = it.dataset.gid;
       selected.has(id) ? selected.delete(id) : selected.add(id);
       it.classList.toggle("on", selected.has(id));
+      buildCrop();
     });
     const m = modal({
       title: "Настройки проекта", body: wrap, wide: true,
@@ -260,6 +282,7 @@ export async function render(root, [projectId]) {
       if (err) return toastError(new Error(err));
       if (!selected.size) return toastError(new Error("Выберите хотя бы один клип геймплея."));
       const s = form.getValue();
+      s.crop = cropEd.getValue();
       const durationChanged = Number(s.episode_seconds) !== Number(project.settings.episode_seconds)
         || Number(s.min_last_seconds) !== Number(project.settings.min_last_seconds);
       if (durationChanged && project.episodes.length && !(await confirmDialog("Изменить длительность частей?",

@@ -1,5 +1,6 @@
 import { api } from "../api.js";
 import { mediaImport } from "../media-import.js";
+import { cropEditor, focusOf, sourceFromMedia } from "../crop-editor.js";
 import { settingsForm } from "../settings-form.js";
 import { $, $$, esc, fmtDuration, icon, timelineHtml, toast, toastError, plural } from "../ui.js";
 
@@ -12,7 +13,7 @@ export async function render(root) {
     <div class="page-head"><div><h1>Новый проект</h1>
       <div class="sub">Весь мультфильм будет разделён на последовательные части без пропусков, с геймплеем снизу и субтитрами</div></div></div>
     <div class="grid grid-2">
-      <div class="card"><div class="card-head"><h2>1. Основное видео</h2><span class="hint">мультфильм, анимация, комментарий</span></div><div id="main-import"></div></div>
+      <div class="card"><div class="card-head"><h2>1. Основное видео</h2><span class="hint">мультфильм, анимация, комментарий</span></div><div id="main-import"></div><div id="subs-file" class="mt hidden"></div></div>
       <div class="card"><div class="card-head"><h2>2. Геймплей</h2><span class="hint">например, Roblox — будет снизу без звука</span></div>
         <div id="gp-import"></div>
         <div class="mt" id="gp-lib-wrap"></div>
@@ -20,6 +21,7 @@ export async function render(root) {
     </div>
     <div class="card mt"><div class="card-head"><h2>3. Разбивка на части</h2><div class="spacer"></div><span class="hint" id="plan-hint"></span></div>
       <div id="plan"><div class="muted small">Загрузите основное видео, чтобы увидеть, как оно будет разделено.</div></div></div>
+    <div class="card mt hidden" id="crop-card"><div class="card-head"><h2>Кадрирование</h2><span class="hint">автоматически или вручную — перетащите рамку</span></div><div id="crop"></div></div>
     <div class="card mt"><div class="card-head"><h2>4. Настройки</h2></div>
       <label class="field" style="margin-bottom:16px"><span>Название проекта (необязательно)</span>
         <input type="text" id="title" maxlength="200" placeholder="По умолчанию — название видео"></label>
@@ -31,14 +33,69 @@ export async function render(root) {
   const form = settingsForm(defaults, { showCaption: true });
   $("#settings", root).appendChild(form.el);
 
-  const mainImp = mediaImport({ kind: "main", onChange: () => { updatePlan(); updateButton(); } });
+  let cropEd = null, cropKey = "";
+  function updateCrop() {
+    const m = mainImp.media;
+    const g = lib.find((x) => selected.has(x.id) && x.status === "ready") || (gpImp?.media?.status === "ready" ? gpImp.media : null);
+    const card = $("#crop-card", root);
+    if (!m || m.status !== "ready" || !g) { card.classList.add("hidden"); return; }
+    card.classList.remove("hidden");
+    const key = `${m.id}|${g.id}`;
+    const s = form.getValue();
+    if (key === cropKey && cropEd) { cropEd.setLayout(s.layout); cropEd.setDivider(s.divider); return; }
+    cropKey = key;
+    const prev = cropEd ? cropEd.getValue() : (defaults.crop || {});
+    $("#crop", root).innerHTML = "";
+    cropEd = cropEditor({
+      main: sourceFromMedia(m), game: sourceFromMedia(g, 0.1), layout: s.layout, crop: prev, divider: s.divider,
+      auto: { main_x: focusOf(m).x, main_y: focusOf(m).y, game_x: focusOf(g).x, game_y: focusOf(g).y },
+      hint: "«Автоматически»: чёрные полосы убираются, а рамка в каждой части ставится туда, где происходит действие. Зелёная пунктирная рамка — примерное положение для всего видео.",
+    });
+    $("#crop", root).appendChild(cropEd.el);
+  }
+
+  async function updateSubs() {
+    const box = $("#subs-file", root);
+    const m = mainImp.media;
+    if (!m || m.status !== "ready") { box.classList.add("hidden"); return; }
+    box.classList.remove("hidden");
+    let info = null;
+    try { info = (await api.get(`/api/media/${m.id}`)).subtitles_file; } catch { /* ignore */ }
+    box.innerHTML = `<div class="field-label" style="margin-bottom:6px">Субтитры из файла (необязательно)</div>
+      ${info ? `<div class="row"><span class="badge ok">${esc(info.filename)} · ${info.cues} фраз</span>
+          <button class="btn sm ghost" type="button" data-subs-del>${icon.trash}Убрать</button></div>
+        <div class="small faint mt-s">Субтитры возьмутся из файла — распознавание речи не понадобится.</div>`
+      : `<button class="btn sm" type="button" data-subs-pick>${icon.upload}Загрузить .srt / .vtt</button>
+        <input type="file" accept=".srt,.vtt" class="hidden" data-subs-input>
+        <div class="small faint mt-s">Если файла нет, субтитры будут созданы автоматически из речи в видео.</div>`}`;
+    const pick = box.querySelector("[data-subs-pick]");
+    if (pick) {
+      const input = box.querySelector("[data-subs-input]");
+      pick.onclick = () => input.click();
+      input.onchange = async () => {
+        const f = input.files[0];
+        if (!f) return;
+        try {
+          const resp = await fetch(`/api/media/${m.id}/subtitles?filename=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.detail || "Ошибка загрузки субтитров");
+          toast(`Субтитры загружены: ${data.cues} фраз`, "ok");
+        } catch (e) { toastError(e); }
+        updateSubs();
+      };
+    }
+    const del = box.querySelector("[data-subs-del]");
+    if (del) del.onclick = async () => { try { await api.del(`/api/media/${m.id}/subtitles`); } catch (e) { toastError(e); } updateSubs(); };
+  }
+
+  const mainImp = mediaImport({ kind: "main", onChange: () => { updatePlan(); updateButton(); updateCrop(); updateSubs(); } });
   $("#main-import", root).appendChild(mainImp.el);
 
   const gpImp = mediaImport({
     kind: "gameplay",
     onChange: (m) => {
       if (m && m.status !== "error") selected.add(m.id);
-      refreshLibrary();
+      refreshLibrary().then(updateCrop);
       updateButton();
     },
   });
@@ -63,6 +120,7 @@ export async function render(root) {
       selected.has(id) ? selected.delete(id) : selected.add(id);
       it.classList.toggle("on", selected.has(id));
       updateButton();
+      updateCrop();
     });
   }
   async function refreshLibrary() {
@@ -94,7 +152,7 @@ export async function render(root) {
       } catch (e) { box.innerHTML = `<div class="alert err">${esc(e.message)}</div>`; }
     }, 150);
   }
-  form.el.addEventListener("change-settings", updatePlan);
+  form.el.addEventListener("change-settings", () => { updatePlan(); updateCrop(); });
 
   function updateButton() {
     const m = mainImp.media;
@@ -117,7 +175,7 @@ export async function render(root) {
         title: $("#title", root).value.trim(),
         main_media_id: mainImp.media.id,
         gameplay_media_ids: [...selected],
-        settings: form.getValue(),
+        settings: { ...form.getValue(), ...(cropEd ? { crop: cropEd.getValue() } : {}) },
         start: true,
       });
       toast("Проект создан, обработка запущена", "ok");

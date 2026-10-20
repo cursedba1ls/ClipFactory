@@ -48,7 +48,7 @@ export async function render(root) {
     <div class="card mt" id="tiktok"></div>
     <div class="card mt"><div class="card-head"><h2>Система</h2></div><div id="sys"></div></div>`;
 
-  const form = settingsForm(s.defaults, { showCaption: false, showCrop: true, showAdvanced: true });
+  const form = settingsForm(s.defaults, { showCaption: false, showAdvanced: true });
   $("#defaults", root).appendChild(form.el);
 
   $("#save", root).onclick = async () => {

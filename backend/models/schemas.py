@@ -39,10 +39,14 @@ class Numbering(BaseModel):
 
 
 class Crop(BaseModel):
+    # auto: black bars removed + crop window follows the action in each part; manual: positions below
+    mode: Literal["auto", "manual"] = "auto"
     main_x: float = Field(default=0.5, ge=0, le=1)
     main_y: float = Field(default=0.5, ge=0, le=1)
+    main_zoom: float = Field(default=1.0, ge=1, le=3)
     game_x: float = Field(default=0.5, ge=0, le=1)
     game_y: float = Field(default=0.5, ge=0, le=1)
+    game_zoom: float = Field(default=1.0, ge=1, le=3)
 
 
 class ProjectSettings(BaseModel):

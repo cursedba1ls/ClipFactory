@@ -16,3 +16,4 @@ tools/
 Thumbs.db
 .idea/
 .vscode/
+examples/output/

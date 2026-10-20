@@ -25,7 +25,7 @@ function layoutIcon(top) {
   return `<span class="layout-opt"><i style="flex:${top}"></i><i style="flex:${100 - top}"></i></span>`;
 }
 
-export function settingsForm(initial, { showCaption = true, showCrop = false, showAdvanced = false } = {}) {
+export function settingsForm(initial, { showCaption = true, showAdvanced = false } = {}) {
   const v = structuredClone(initial || {});
   v.subtitle_style = v.subtitle_style || { preset: "bigword" };
   v.numbering = v.numbering || { enabled: true, format: "Часть {n}/{total}", position: "top-center", size: 54, margin: 70 };
@@ -94,15 +94,6 @@ export function settingsForm(initial, { showCaption = true, showCrop = false, sh
         </div>
         <div class="small faint mt-s ${v.gameplay_audio ? "hidden" : ""}" data-muted-note>По умолчанию звук геймплея выключен.</div>
       </div>
-      ${showCrop ? `
-      <div class="field">
-        <span class="field-label">Кадрирование мультфильма по горизонтали</span>
-        <div class="slider-row"><input type="range" min="0" max="1" step="0.01" data-k="crop.main_x" value="${esc(v.crop.main_x)}"><output>${Math.round(v.crop.main_x * 100)}%</output></div>
-      </div>
-      <div class="field">
-        <span class="field-label">Кадрирование геймплея по горизонтали</span>
-        <div class="slider-row"><input type="range" min="0" max="1" step="0.01" data-k="crop.game_x" value="${esc(v.crop.game_x)}"><output>${Math.round(v.crop.game_x * 100)}%</output></div>
-      </div>` : ""}
       ${showCaption ? `
       <label class="field"><span>Название для подписей (необязательно)</span>
         <input type="text" maxlength="100" data-k="caption_title" placeholder="Например: Том и Джерри" value="${esc(v.caption_title || "")}"></label>
@@ -129,6 +120,7 @@ export function settingsForm(initial, { showCaption = true, showCrop = false, sh
     $$("[data-preset]", el).forEach((x) => x.classList.toggle("on", x === p));
     emit();
   }));
+  $("[data-k=divider]", el).addEventListener("change", emit);
   $$("input[type=range]", el).forEach((r) => r.addEventListener("input", () => {
     const out = r.parentElement.querySelector("output");
     if (out) out.textContent = `${Math.round(r.value * 100)}%`;
@@ -166,9 +158,6 @@ export function settingsForm(initial, { showCaption = true, showCrop = false, sh
     out.main_audio = $("[data-k=main_audio]", el).checked;
     out.gameplay_audio = ga.checked;
     out.gameplay_volume = Number($("[data-k=gameplay_volume]", el).value);
-    if (showCrop) {
-      out.crop = { ...v.crop, main_x: Number($('[data-k="crop.main_x"]', el).value), game_x: Number($('[data-k="crop.game_x"]', el).value) };
-    }
     if (showCaption) {
       out.caption_title = $("[data-k=caption_title]", el).value.trim();
       out.hashtags = $("[data-k=hashtags]", el).value.trim();
