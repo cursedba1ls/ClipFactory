@@ -2,6 +2,7 @@
 import { esc, $, $$ } from "./ui.js";
 
 export const PRESETS = [
+  { id: "bigword", name: "Крупно по слову", sample: `<span style="font-family:'Arial Black',Arial;font-weight:900;font-size:24px;color:#fff;-webkit-text-stroke:2.4px #000;paint-order:stroke fill">аа</span>` },
   { id: "classic", name: "TikTok Classic", sample: `<span style="font-weight:800;color:#fff;-webkit-text-stroke:1.2px #000;paint-order:stroke fill;text-shadow:0 0 2px #000">Привет всем</span>` },
   { id: "karaoke", name: "Караоке", sample: `<span style="font-weight:800;color:#fff;-webkit-text-stroke:1.2px #000;paint-order:stroke fill">Привет <span style="color:#FFE600">всем</span></span>` },
   { id: "minimal", name: "Минимализм", sample: `<span style="font-weight:500;color:#fff;text-shadow:0 1px 3px #000">Привет всем</span>` },
@@ -26,7 +27,7 @@ function layoutIcon(top) {
 
 export function settingsForm(initial, { showCaption = true, showCrop = false, showAdvanced = false } = {}) {
   const v = structuredClone(initial || {});
-  v.subtitle_style = v.subtitle_style || { preset: "classic" };
+  v.subtitle_style = v.subtitle_style || { preset: "bigword" };
   v.numbering = v.numbering || { enabled: true, format: "Часть {n}/{total}", position: "top-center", size: 54, margin: 70 };
   v.crop = v.crop || { main_x: 0.5, main_y: 0.5, game_x: 0.5, game_y: 0.5 };
   const custom = !DURATIONS.includes(Number(v.episode_seconds));
@@ -46,6 +47,7 @@ export function settingsForm(initial, { showCaption = true, showCrop = false, sh
       <div class="field">
         <span class="field-label">Разделение экрана (мультфильм / геймплей)</span>
         ${seg("layout", [["50/50", `${layoutIcon(50)}50/50`], ["55/45", `${layoutIcon(55)}55/45`], ["60/40", `${layoutIcon(60)}60/40`]], v.layout || "50/50")}
+        <label class="switch mt-s"><input type="checkbox" data-k="divider" ${v.divider !== false ? "checked" : ""}><span class="track"></span><span class="small">Тонкая чёрная линия между частями экрана</span></label>
       </div>
       <div class="field">
         <span class="field-label">Качество экспорта</span>
@@ -57,7 +59,7 @@ export function settingsForm(initial, { showCaption = true, showCrop = false, sh
           <label class="switch"><input type="checkbox" data-k="subtitles_enabled" ${v.subtitles_enabled !== false ? "checked" : ""}><span class="track"></span><span class="small muted">Субтитры</span></label>
         </div>
         <div class="presets mt-s" data-presets>
-          ${PRESETS.map((p) => `<div class="preset ${p.id === (v.subtitle_style.preset || "classic") ? "on" : ""}" data-preset="${p.id}">
+          ${PRESETS.map((p) => `<div class="preset ${p.id === (v.subtitle_style.preset || "bigword") ? "on" : ""}" data-preset="${p.id}">
             <div class="sample">${p.sample}</div><div class="name">${p.name}</div></div>`).join("")}
         </div>
       </div>
@@ -148,12 +150,13 @@ export function settingsForm(initial, { showCaption = true, showCrop = false, sh
     const d = segVal("episode_seconds");
     out.episode_seconds = d === "custom" ? Number($("[data-custom]", el).value) : Number(d);
     out.layout = segVal("layout");
+    out.divider = $("[data-k=divider]", el).checked;
     out.quality = segVal("quality");
     out.language = segVal("language");
     out.gameplay_mode = segVal("gameplay_mode");
     out.subtitles_enabled = $("[data-k=subtitles_enabled]", el).checked;
-    const preset = $("[data-preset].on", el)?.dataset.preset || "classic";
-    if (preset !== (v.subtitle_style.preset || "classic")) {
+    const preset = $("[data-preset].on", el)?.dataset.preset || "bigword";
+    if (preset !== (v.subtitle_style.preset || "bigword")) {
       out.subtitle_style = { preset, position: v.subtitle_style.position ?? null };
     } else {
       out.subtitle_style = { ...v.subtitle_style, preset };

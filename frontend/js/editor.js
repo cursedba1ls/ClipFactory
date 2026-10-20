@@ -104,7 +104,7 @@ export async function openEditor(episodeId, onSaved) {
           <div class="presets">${PRESETS.map((p) => `<div class="preset ${p.id === st.preset ? "on" : ""}" data-preset="${p.id}"><div class="sample">${p.sample}</div><div class="name">${p.name}</div></div>`).join("")}</div>
           <div class="form-grid">
             <label class="field"><span>Шрифт</span><select data-s="font_family">${[...new Set([st.font_family, ...FONTS])].map((f) => `<option ${f === st.font_family ? "selected" : ""}>${esc(f)}</option>`).join("")}</select></label>
-            <label class="field"><span>Размер шрифта</span><div class="slider-row"><input type="range" min="40" max="140" data-s="font_size" value="${st.font_size}"><output>${st.font_size}</output></div></label>
+            <label class="field"><span>Размер шрифта</span><div class="slider-row"><input type="range" min="40" max="160" data-s="font_size" value="${st.font_size}"><output>${st.font_size}</output></div></label>
             <div class="field"><span class="field-label">Цвета: текст · обводка · подсветка</span><div class="row">
               <input type="color" data-s="text_color" value="${st.text_color}" title="Цвет текста">
               <input type="color" data-s="outline_color" value="${st.outline_color}" title="Цвет обводки">
@@ -149,10 +149,11 @@ export async function openEditor(episodeId, onSaved) {
 
   function presetDefaults(id) {
     return {
-      classic: { font_size: 82, bold: true, outline: 7, shadow: 0, animation: 0 },
-      karaoke: { font_size: 82, bold: true, outline: 7, shadow: 0, animation: 0.3 },
-      minimal: { font_size: 64, bold: false, outline: 2.5, shadow: 1, animation: 0 },
-      animated: { font_size: 84, bold: true, outline: 7, shadow: 0, animation: 0.6 },
+      bigword: { font_family: "Arial Black", font_size: 124, bold: true, outline: 10, shadow: 0, animation: 0.25, max_words: 2 },
+      classic: { font_family: "Arial", font_size: 82, bold: true, outline: 7, shadow: 0, animation: 0, max_words: 4 },
+      karaoke: { font_family: "Arial", font_size: 82, bold: true, outline: 7, shadow: 0, animation: 0.3, max_words: 4 },
+      minimal: { font_family: "Arial", font_size: 64, bold: false, outline: 2.5, shadow: 1, animation: 0, max_words: 4 },
+      animated: { font_family: "Arial", font_size: 84, bold: true, outline: 7, shadow: 0, animation: 0.6, max_words: 4 },
     }[id];
   }
 

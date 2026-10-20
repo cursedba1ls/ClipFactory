@@ -25,6 +25,13 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PRESETS: dict[str, dict] = {
+    # Popular TikTok look: 1–2 huge heavy words with a very thick outline, right on the split line.
+    "bigword": {
+        "preset": "bigword", "font_family": "Arial Black", "font_size": 124, "bold": True,
+        "text_color": "#FFFFFF", "outline_color": "#000000", "outline": 10, "shadow": 0,
+        "highlight_color": "#FFE600", "animation": 0.25, "uppercase": False,
+        "max_words": 2, "max_line_chars": 12,
+    },
     "classic": {
         "preset": "classic", "font_family": "Arial", "font_size": 82, "bold": True,
         "text_color": "#FFFFFF", "outline_color": "#000000", "outline": 7, "shadow": 0,
@@ -48,6 +55,7 @@ PRESETS: dict[str, dict] = {
 }
 
 PRESET_NAMES = {
+    "bigword": "Крупно по слову",
     "classic": "TikTok Classic",
     "karaoke": "Караоке",
     "minimal": "Минимализм",
@@ -63,9 +71,9 @@ COMMON_STYLE = {
 
 def resolve_style(style: dict | None) -> dict:
     style = dict(style or {})
-    preset = style.get("preset") or "classic"
+    preset = style.get("preset") or "bigword"
     if preset not in PRESETS:
-        preset = "classic"
+        preset = "bigword"
     out = dict(COMMON_STYLE)
     out.update(PRESETS[preset])
     for k, v in style.items():
@@ -290,8 +298,9 @@ def build_cues(words: list[dict], max_words: int = 4, max_chars: int = 36,
 
     # Merge single-word orphans into the previous cue when they are adjacent in time.
     merged: list[list[dict]] = []
+    merge_limit = max_words + 1 if max_words >= 3 else max_words  # 1–2 word styles stay short
     for g in groups:
-        if (merged and len(g) == 1 and len(merged[-1]) < max_words + 1
+        if (merged and len(g) == 1 and len(merged[-1]) < merge_limit
                 and g[0]["start"] - merged[-1][-1]["end"] < 0.25
                 and not _SENTENCE_END.search(merged[-1][-1]["text"])
                 and len(" ".join(x["text"] for x in merged[-1] + g)) <= max_chars):
@@ -567,7 +576,7 @@ def _cue_events(cue: dict, st: dict, cx: float, cy: float) -> list[str]:
     def dialogue(s: float, e: float, body: str, layer: int = 0) -> str:
         return f"Dialogue: {layer},{ass_time(s, round_up=True)},{ass_time(e)},Sub,,0,0,0,,{{{pos}}}{body}"
 
-    if preset in ("classic", "minimal"):
+    if preset in ("bigword", "classic", "minimal"):
         intro = ""
         if intensity > 0:
             sc = int(100 + 25 * intensity)

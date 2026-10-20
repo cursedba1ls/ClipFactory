@@ -144,3 +144,13 @@ def test_style_escaping():
     assert "{" not in sg.ass_escape("{\\b1}hack")
     st = sg.resolve_style({"font_family": "Arial,{evil}"})
     assert "," not in st["font_family"] and "{" not in st["font_family"]
+
+
+def test_bigword_preset_is_default_and_short():
+    st = sg.resolve_style(None)
+    assert st["preset"] == "bigword" and st["max_words"] == 2 and st["font_size"] >= 110
+    words = words_from("аа лысая башка ты куда идёшь сегодня утром", 0.0, step=0.3, dur=0.25)
+    cues = sg.cues_for_episode(words, 0, 60, True, True, None)
+    assert all(1 <= len(c["words"]) <= 2 for c in cues)
+    ass = sg.build_ass(cues, None, {"enabled": False}, 1, 1, 60, 960)
+    assert "Style: Sub,Arial Black,124" in ass and "\\pos(540,960)" in ass

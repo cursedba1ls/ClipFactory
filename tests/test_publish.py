@@ -169,7 +169,7 @@ def test_secrets_not_stored_in_plain_settings(client):
 def test_captions_neutral_and_numbered():
     assert captions.make_caption(1, 5) == "Начало истории 🔥 | Часть 1/5"
     assert captions.make_caption(5, 5) == "Финальная часть 😳 | Часть 5/5"
-    assert captions.make_caption(3, 5, "Кот и мышь").startswith("Кот и мышь — ")
+    assert captions.make_caption(2, 5, "как я Лысым стал") == "как я Лысым стал часть 2"
     tags = captions.make_hashtags("#мультик roblox", "#кот", "собака собака собака бегает")
     assert tags.split()[:3] == ["#кот", "#мультик", "#roblox"]
     assert "#собака" in tags

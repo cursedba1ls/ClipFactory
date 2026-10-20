@@ -293,7 +293,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .pcard .title { font-weight: 650; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- presets ---------- */
-.presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
 .preset {
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 10px; cursor: pointer;
   background: var(--surface); text-align: center;
@@ -402,7 +402,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   .sidebar-foot { display: none; }
   .main { padding: 20px 16px 50px; }
   .grid-2, .grid-3, .form-grid, .q-grid { grid-template-columns: 1fr; }
-  .presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .presets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .editor { grid-template-columns: 1fr; }
   .editor-left { position: static; max-width: 300px; margin: 0 auto; }
   .media-preview { grid-template-columns: 1fr; }

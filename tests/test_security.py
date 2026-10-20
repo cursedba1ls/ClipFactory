@@ -75,3 +75,15 @@ def test_ffmpeg_args_are_a_list_without_shell():
 def test_validation_errors_in_russian(client):
     r = client.post("/api/projects", json={"main_media_id": "x", "settings": {"episode_seconds": 1}})
     assert r.status_code == 422 and r.json()["detail"].startswith("Некорректные данные")
+
+
+def test_divider_line_drawn_on_split():
+    from fractions import Fraction
+    from backend.services.video_composer import build_filter_and_inputs
+    win = CutWindow(0, 0, 10, 0, 10, 10)
+    base = dict(main_path="m.mp4", window=win, fps=Fraction(30), main_has_audio=False,
+                gameplay_path=None, gameplay_pieces=[], layout="55/45")
+    _, graph, _, _ = build_filter_and_inputs(EpisodeRenderSpec(**base, divider=True))
+    assert "drawbox=x=0:y=1053:w=iw:h=6:color=black" in graph  # 55/45 split at y=1056
+    _, graph, _, _ = build_filter_and_inputs(EpisodeRenderSpec(**base, divider=False))
+    assert "drawbox" not in graph

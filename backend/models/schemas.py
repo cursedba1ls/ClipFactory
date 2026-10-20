@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class SubtitleStyle(BaseModel):
-    preset: Literal["classic", "karaoke", "minimal", "animated"] = "classic"
+    preset: Literal["bigword", "classic", "karaoke", "minimal", "animated"] = "bigword"
     font_family: Optional[str] = Field(default=None, max_length=64)
     font_size: Optional[int] = Field(default=None, ge=24, le=200)
     bold: Optional[bool] = None
@@ -49,6 +49,7 @@ class ProjectSettings(BaseModel):
     episode_seconds: float = Field(default=60, ge=5, le=600)
     min_last_seconds: float = Field(default=3, ge=0, le=60)
     layout: Literal["50/50", "55/45", "60/40"] = "50/50"
+    divider: bool = True  # thin black line between the cartoon and the gameplay
     subtitles_enabled: bool = True
     subtitle_style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     numbering: Numbering = Field(default_factory=Numbering)
@@ -73,7 +74,7 @@ class AppSettings(BaseModel):
     max_download_mb: int = Field(default=4096, ge=10, le=100000)
     max_upload_mb: int = Field(default=8192, ge=10, le=100000)
     force_normalize: bool = False
-    default_hashtags: str = Field(default="#мультик #мультфильм #роблокс #roblox #рекомендации", max_length=500)
+    default_hashtags: str = Field(default="#анимация #мультик #роблокс #roblox #рекомендации", max_length=500)
     tiktok_client_key: str = Field(default="", max_length=200)
     tiktok_redirect_uri: str = Field(default="", max_length=500)
     keep_temp_files: bool = False

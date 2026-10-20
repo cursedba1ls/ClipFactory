@@ -182,6 +182,7 @@ def render_episode(
         gameplay_volume=float(settings.get("gameplay_volume", 0.15)),
         layout=opts["layout"],
         crop=opts["crop"],
+        divider=bool(settings.get("divider", True)),
         ass_relpath=ass_path.relative_to(config.STORAGE).as_posix(),
         fontsdir_relpath=_fontsdir(),
         audio_delay=audio_delay,

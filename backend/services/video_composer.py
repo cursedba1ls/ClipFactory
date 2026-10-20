@@ -16,6 +16,7 @@ from backend.services.video_splitter import CutWindow
 
 LAYOUTS = {"50/50": 0.50, "55/45": 0.55, "60/40": 0.60}
 MAX_OUTPUT_FPS = 60
+DIVIDER_PX = 6
 
 
 def layout_heights(layout: str, height: int = config.OUTPUT_HEIGHT) -> tuple[int, int]:
@@ -50,6 +51,7 @@ class EpisodeRenderSpec:
     crop: dict = field(default_factory=dict)
     ass_relpath: str | None = None  # relative to the ffmpeg working directory
     fontsdir_relpath: str | None = None
+    divider: bool = False  # thin black line on the split
     audio_delay: float = 0.0  # seconds of silence before main audio (stream start offset)
     width: int = config.OUTPUT_WIDTH
     height: int = config.OUTPUT_HEIGHT
@@ -132,7 +134,12 @@ def build_filter_and_inputs(spec: EpisodeRenderSpec) -> tuple[list[str], str, st
         chains.append(f"color=c=black:s={w}x{bot_h}:r={fps_str}:d={fmt_time(dur + 1)},"
                       f"trim=end_frame={n_frames},format=yuv420p[bot]")
 
-    chains.append("[top][bot]vstack=inputs=2:shortest=1[stack]")
+    if spec.divider:
+        chains.append("[top][bot]vstack=inputs=2:shortest=1[stack0]")
+        lw = DIVIDER_PX
+        chains.append(f"[stack0]drawbox=x=0:y={top_h - lw // 2}:w=iw:h={lw}:color=black:t=fill[stack]")
+    else:
+        chains.append("[top][bot]vstack=inputs=2:shortest=1[stack]")
     if spec.ass_relpath:
         chains.append(f"[stack]{_ass_filter(spec)}[vout]")
     else:

@@ -36,17 +36,18 @@ def keywords(text: str, n: int = 2) -> list[str]:
 
 def make_caption(n: int, total: int, title: str = "") -> str:
     title = (title or "").strip()
-    part = f"Часть {n}/{total}"
+    if title:
+        # Format used by popular series accounts: "как я Лысым стал часть 2"
+        return title if total <= 1 else f"{title} часть {n}"
     if total <= 1:
-        return f"{title} 🎬" if title else "Смотри до конца 🎬"
+        return "Смотри до конца 🎬"
     if n == 1:
-        body = f"{title} — начало 🔥" if title else "Начало истории 🔥"
+        body = "Начало истории 🔥"
     elif n == total:
-        body = f"{title} — финал 😳" if title else "Финальная часть 😳"
+        body = "Финальная часть 😳"
     else:
-        tpl = MIDDLE_TEMPLATES[(n - 2) % len(MIDDLE_TEMPLATES)]
-        body = f"{title} — {tpl}" if title else tpl
-    return f"{body} | {part}"
+        body = MIDDLE_TEMPLATES[(n - 2) % len(MIDDLE_TEMPLATES)]
+    return f"{body} | Часть {n}/{total}"
 
 
 def normalize_hashtags(raw: str) -> list[str]:
