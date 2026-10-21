@@ -63,6 +63,9 @@ def app_files() -> list[str]:
 
 
 def main() -> None:
+    # Windows consoles default to cp1252: print Cyrillic safely there.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--examples", type=Path, help="folder with zakatun.mp4, zakatun.srt, obby_gameplay.mp4 "
                                                    "and finished «Закатун - Часть N.mp4» files")
