@@ -1,7 +1,9 @@
 """Speech recognition resilience: failing parts are skipped, GPU/VAD failures recover, errors stay readable."""
 import math
+import wave
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from backend.errors import UserError
@@ -25,10 +27,12 @@ class ScriptedModel:
         self.fail_msg = fail_msg
         self.call_errors = list(call_errors)
         self.calls = []
+        self.inputs = []
         self.device = device
 
-    def transcribe(self, path, **kw):
+    def transcribe(self, audio, **kw):
         self.calls.append(kw)
+        self.inputs.append(audio)
         if self.call_errors:
             raise RuntimeError(self.call_errors.pop(0))
         clip = kw.get("clip_timestamps")
@@ -58,6 +62,7 @@ SEGMENTS = [(i * 2.0, i * 2.0 + 1.5, f"слово{i}а слово{i}б") for i i
 @pytest.fixture()
 def patch_engine(monkeypatch):
     monkeypatch.setattr(sg, "whisper_available", lambda: True)
+    monkeypatch.setattr(sg, "load_audio", lambda path: np.zeros(20 * sg.SAMPLE_RATE, np.float32))
 
     def install(model, cpu_model=None):
         monkeypatch.setattr(sg, "_load_model", lambda size, device: cpu_model if device == "cpu" and cpu_model else model)
@@ -96,6 +101,7 @@ def test_bad_words_are_skipped_not_fatal(patch_engine):
 
 def test_gpu_failure_falls_back_to_cpu(monkeypatch):
     monkeypatch.setattr(sg, "whisper_available", lambda: True)
+    monkeypatch.setattr(sg, "load_audio", lambda path: np.zeros(20 * sg.SAMPLE_RATE, np.float32))
     gpu = ScriptedModel(SEGMENTS, call_errors=["Library cublas64_12.dll is not found or cannot be loaded"], device="cuda")
     cpu = ScriptedModel(SEGMENTS)
     loads = []
@@ -140,3 +146,75 @@ def test_clean_run_has_no_skips(patch_engine):
     result = sg.transcribe("x.wav", device="cpu", duration=20.0)
     assert result["skipped"] == [] and len(result["segments"]) == len(SEGMENTS)
     assert all(math.isfinite(w["start"]) for w in result["words"])
+
+
+def test_engine_gets_samples_not_a_file_path(patch_engine):
+    """faster-whisper's own file decoder (PyAV) is never used: it breaks with some PyAV versions."""
+    model = patch_engine(ScriptedModel(SEGMENTS))
+    sg.transcribe("x.wav", device="cpu", duration=20.0)
+    assert all(isinstance(a, np.ndarray) and a.dtype == np.float32 for a in model.inputs)
+
+
+def test_error_before_start_is_reported_once_not_retried_per_second(patch_engine):
+    """The user's case: an error that repeats on every attempt must not loop 40 times."""
+    message = "open() got an unexpected keyword argument 'metadata_errors'"
+    model = patch_engine(ScriptedModel(SEGMENTS, call_errors=[message] * 100))
+    with pytest.raises(UserError) as exc:
+        sg.transcribe("x.wav", device="cpu", duration=20.0)
+    assert len(model.calls) == 1
+    assert exc.value.message == "Ошибка распознавания речи."
+    assert message in exc.value.detail and "ни в одном участке" not in exc.value.detail
+
+
+def test_error_before_restart_keeps_already_recognised_words(patch_engine):
+    model = patch_engine(ScriptedModel(SEGMENTS, fail_at=8.0))
+    original = model.transcribe
+
+    def transcribe(audio, **kw):
+        if kw.get("clip_timestamps"):
+            raise RuntimeError("cannot restart")
+        return original(audio, **kw)
+    model.transcribe = transcribe
+    result = sg.transcribe("x.wav", device="cpu", duration=20.0)
+    assert {w["start"] for w in result["words"]} >= {0.0, 6.0}
+    assert result["skipped"][-1]["end"] == pytest.approx(20.0)
+
+
+def test_words_after_the_end_of_audio_are_dropped(patch_engine):
+    segs = SEGMENTS + [(25.0, 26.0, "призрак")]
+    patch_engine(ScriptedModel(segs))
+    result = sg.transcribe("x.wav", device="cpu", duration=20.0)
+    assert all(w["start"] < 20.0 and w["end"] <= 20.0 for w in result["words"])
+    assert "призрак" not in {w["text"] for w in result["words"]}
+
+
+def _write_wav(path, samples, rate=16000, channels=1):
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(samples.astype("<i2").tobytes())
+
+
+def test_load_audio_reads_the_extracted_wav(tmp_path):
+    p = tmp_path / "speech.wav"
+    _write_wav(p, np.array([0, 16384, -32768, 32767], dtype=np.int16))
+    a = sg.load_audio(p)
+    assert a.dtype == np.float32
+    assert a.tolist() == pytest.approx([0.0, 0.5, -1.0, 32767 / 32768])
+
+
+def test_load_audio_mixes_stereo(tmp_path):
+    p = tmp_path / "stereo.wav"
+    _write_wav(p, np.array([16384, 0, 16384, 16384], dtype=np.int16), channels=2)
+    assert sg.load_audio(p).tolist() == pytest.approx([0.25, 0.5])
+
+
+def test_load_audio_converts_other_formats_with_ffmpeg(tmp_path):
+    from tests.conftest import ffmpeg
+    p = tmp_path / "tone.m4a"
+    ffmpeg("-f", "lavfi", "-i", "sine=f=440:d=2:r=44100", "-c:a", "aac", str(p))
+    a = sg.load_audio(p)
+    assert a.dtype == np.float32
+    assert len(a) == pytest.approx(2 * sg.SAMPLE_RATE, abs=1600)
+    assert 0.05 < float(np.abs(a).max()) <= 1.0

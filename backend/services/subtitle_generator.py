@@ -220,6 +220,47 @@ def _valid_word(w) -> dict | None:
             "p": round(prob, 3) if math.isfinite(prob) else 0.0}
 
 
+SAMPLE_RATE = 16000
+
+
+def load_audio(audio_path: str | Path):
+    """Speech audio as float32 mono 16 kHz samples (what Whisper expects).
+
+    The pipeline extracts a 16 kHz mono 16-bit WAV with ffmpeg, which is read here with the
+    standard library. Passing samples to faster-whisper (instead of a file path) means its own
+    PyAV-based decoder is never used: some PyAV releases are incompatible with it
+    ("open() got an unexpected keyword argument 'metadata_errors'").
+    Other formats are converted by ffmpeg into raw samples.
+    """
+    import wave
+
+    import numpy as np
+
+    path = Path(audio_path)
+    try:
+        with wave.open(str(path), "rb") as wf:
+            if wf.getframerate() == SAMPLE_RATE and wf.getsampwidth() == 2 and wf.getnchannels() in (1, 2):
+                channels = wf.getnchannels()
+                data = np.frombuffer(wf.readframes(wf.getnframes()), dtype="<i2")
+                if channels == 2:
+                    data = data[: len(data) // 2 * 2].reshape(-1, 2).mean(axis=1)
+                return data.astype(np.float32) / 32768.0
+    except (wave.Error, EOFError):
+        pass  # not a plain PCM WAV: let ffmpeg decode it
+    import subprocess
+
+    from backend.services import ffmpeg_utils
+
+    cmd = [ffmpeg_utils.ffmpeg_bin(), "-hide_banner", "-nostdin", "-loglevel", "error", "-i", str(path),
+           "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "f32le", "-acodec", "pcm_f32le", "pipe:1"]
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.run(cmd, capture_output=True, creationflags=flags)
+    if proc.returncode != 0:
+        tail = proc.stderr.decode("utf-8", "replace").strip()[-800:]
+        raise UserError("Не удалось прочитать звуковую дорожку для распознавания речи.", detail=tail)
+    return np.frombuffer(proc.stdout, dtype="<f4").copy()
+
+
 def transcribe(
     audio_path: str | Path,
     model_size: str = "small",
@@ -231,16 +272,22 @@ def transcribe(
 ) -> dict:
     """Transcribe with faster-whisper; returns {"language", "words", "segments", "skipped"}.
 
-    Recognition is resilient: when the engine fails on some part of the audio, that part
-    is skipped (listed in "skipped") and recognition continues from the next position.
-    Only a failure on the whole file raises UserError, and its details say what went wrong.
+    Recognition is resilient: when the engine fails while recognising some part of the audio,
+    that part is skipped (listed in "skipped") and recognition continues after it. An error
+    that happens before recognition starts (it would repeat on every part) is not retried
+    part by part: after the GPU→CPU / VAD-off fallbacks it is reported right away with details.
     """
     if not whisper_available():
         raise UserError("Модуль распознавания речи faster-whisper не установлен. Запустите setup.bat ещё раз.")
+    audio = load_audio(audio_path)
+    if not len(audio):
+        raise UserError("Ошибка распознавания речи.", detail="Звуковая дорожка пустая.")
     model = _load_model(model_size, device)
     current_device = device
     lang = language if language in ("ru", "en") else None
-    total = float(duration or 0)
+    total = float(len(audio)) / SAMPLE_RATE
+    if duration:
+        total = min(total, float(duration)) if total else float(duration)
     words: list[dict] = []
     segments: list[dict] = []
     skipped: list[dict] = []
@@ -253,18 +300,17 @@ def transcribe(
     while True:
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled()
-        clip = None if pos <= 0 else [round(pos, 3), total or 10 ** 6]
+        kwargs = dict(language=lang, word_timestamps=True, vad_filter=use_vad,
+                      beam_size=5, condition_on_previous_text=False)
+        if use_vad:
+            kwargs["vad_parameters"] = {"min_silence_duration_ms": 500}
+        if pos > 0:
+            kwargs["clip_timestamps"] = [round(pos, 3), round(total, 3)]
+        started = False  # True once the engine accepted the audio and began yielding segments
         try:
-            kwargs = dict(language=lang, word_timestamps=True, vad_filter=use_vad,
-                          beam_size=5, condition_on_previous_text=False)
-            if use_vad:
-                kwargs["vad_parameters"] = {"min_silence_duration_ms": 500}
-            if clip:
-                kwargs["clip_timestamps"] = clip
-            seg_iter, info = model.transcribe(str(audio_path), **kwargs)
-            if not total:
-                total = float(getattr(info, "duration", 0) or 0)
-            if lang is None:
+            seg_iter, info = model.transcribe(audio, **kwargs)
+            started = True
+            if lang is None and getattr(info, "language", None):
                 detected = {"language": getattr(info, "language", None),
                             "probability": float(getattr(info, "language_probability", 0) or 0)}
             for seg in seg_iter:
@@ -286,10 +332,11 @@ def transcribe(
         except Exception as exc:  # noqa: BLE001 - the engine raises many library-specific types
             recoveries += 1
             last_error = _describe(exc)
-            log.warning("recognition failed at %.1f s (attempt %d): %s", pos, recoveries, last_error,
-                        exc_info=True)
+            log.warning("recognition failed at %.1f s (attempt %d, %s): %s", pos, recoveries,
+                        "during recognition" if started else "before start", last_error, exc_info=True)
             msg = last_error.lower()
             if recoveries > MAX_RECOVERIES:
+                skipped.append({"start": round(pos, 2), "end": round(total, 2), "error": last_error})
                 break
             if current_device != "cpu" and any(m in msg for m in _CUDA_MARKERS):
                 log.warning("GPU failed during recognition, continuing on CPU")
@@ -299,6 +346,12 @@ def transcribe(
             if use_vad and any(m in msg for m in _VAD_MARKERS):
                 use_vad = False  # voice-activity detection broke: recognise without it
                 continue
+            if not started:
+                # The engine could not even start: the same error would repeat on every part.
+                if not words:
+                    raise UserError("Ошибка распознавания речи.", detail=last_error) from exc
+                skipped.append({"start": round(pos, 2), "end": round(total, 2), "error": last_error})
+                break
             start = pos
             pos = pos + SKIP_STEP
             if total and pos >= total:
@@ -311,6 +364,9 @@ def transcribe(
             "Ошибка распознавания речи.",
             detail=f"Речь не распознана ни в одном участке. Последняя ошибка: {last_error}",
         )
+    if total:  # the engine sometimes "hears" words past the end of the audio: drop or trim them
+        words = [{**w, "end": min(w["end"], round(total, 3))} for w in words if w["start"] < total]
+        segments = [{**s, "end": min(s["end"], round(total, 3))} for s in segments if s["start"] < total]
     words.sort(key=lambda w: (w["start"], w["end"]))
     return {
         "language": detected["language"],
