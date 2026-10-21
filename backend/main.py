@@ -182,6 +182,10 @@ def running_instance(port: int) -> bool:
 def run() -> None:
     import uvicorn
 
+    # Windows consoles default to cp1252: print Cyrillic messages safely everywhere.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     setup_logging()
     port = config.PORT
     if running_instance(port):
