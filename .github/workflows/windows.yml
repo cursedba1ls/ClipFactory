@@ -1,0 +1,74 @@
+name: Windows
+
+on:
+  push:
+    branches: [main, claude/clipfactory-app]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Build the user package (ClipFactory.zip)
+        run: python packaging/build_package.py
+
+      - name: Unpack into a folder with spaces and Cyrillic letters
+        shell: pwsh
+        run: |
+          Expand-Archive dist/ClipFactory.zip -DestinationPath "C:\Мои программы"
+          Get-ChildItem "C:\Мои программы\ClipFactory" | Format-Table Name, Length
+
+      - name: Run setup.bat exactly as the launcher does
+        shell: pwsh
+        run: |
+          Set-Location "C:\Мои программы\ClipFactory\app"
+          cmd /c "setup.bat < nul"
+          if ($LASTEXITCODE -ne 0) { throw "setup.bat failed: $LASTEXITCODE" }
+          if (-not (Test-Path ".venv\Scripts\python.exe")) { throw ".venv was not created" }
+
+      - name: Start ClipFactory, check the API, check single-instance behaviour
+        shell: pwsh
+        run: |
+          $app = "C:\Мои программы\ClipFactory\app"
+          $py = "$app\.venv\Scripts\python.exe"
+          $srv = Start-Process -FilePath $py -ArgumentList "-m", "backend.main", "--no-browser" -WorkingDirectory $app -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep 1
+            try { $r = Invoke-RestMethod http://127.0.0.1:8765/api/health-check; if ($r.app -eq "ClipFactory") { $ok = $true; break } } catch {}
+          }
+          if (-not $ok) { throw "server did not start" }
+          $s = Invoke-RestMethod http://127.0.0.1:8765/api/system
+          $s | ConvertTo-Json -Depth 5
+          if (-not $s.ffmpeg.libass) { throw "FFmpeg without libass" }
+          if (-not $s.whisper_installed) { throw "faster-whisper not installed" }
+          Push-Location $app
+          & $py -m backend.main --no-browser
+          Pop-Location
+          if ($LASTEXITCODE -ne 0) { throw "second instance failed" }
+          Stop-Process -Id $srv.Id
+
+      - name: Full test suite (storage under a Cyrillic path)
+        shell: pwsh
+        env:
+          CLIPFACTORY_TEST_TMP: C:\Тест ClipFactory
+          PYTHONUTF8: "1"
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q -x --durations=10
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipFactory-windows
+          path: dist/ClipFactory.zip

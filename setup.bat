@@ -95,7 +95,7 @@ if not exist ".env" if exist ".env.example" copy ".env.example" ".env" >nul
 echo.
 echo ==========================================================
 echo   Установка завершена.
-echo   Запускайте программу двойным щелчком по файлу start.bat
+echo   Запускайте программу двойным щелчком: ClipFactory.exe (или start.bat)
 echo.
 echo   При первом распознавании речи будет один раз скачана
 echo   модель Whisper - нужен интернет. Дальше всё работает

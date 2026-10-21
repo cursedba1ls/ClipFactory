@@ -16,7 +16,7 @@ from backend.errors import UserError
 from backend.jobs.queue import manager
 from backend.jobs import pipeline
 from backend.models.schemas import BuildRequest, ProjectCreate, ProjectPatch
-from backend.services import renderer
+from backend.services import fsutil, renderer
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -160,7 +160,7 @@ def export_zip(project_id: str):
                 z.write(paths["srt"], name.replace(".mp4", ".srt"))
             lines.append(f"Часть {e['idx'] + 1}/{total}\n{e.get('caption') or ''}\n{e.get('hashtags') or ''}\n")
         z.writestr("Подписи.txt", "\n".join(lines))
-    tmp.replace(out)
+    out = fsutil.safe_replace(tmp, out)
     return safe_file_response(str(out), "application/zip", f"{p['title'][:80]}.zip")
 
 

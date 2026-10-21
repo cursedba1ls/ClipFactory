@@ -142,6 +142,10 @@ def create_app() -> FastAPI:
     for r in (system.router, media.router, projects.router, episodes.router, jobs.router, publish.router):
         app.include_router(r)
 
+    @app.get("/api/health-check", include_in_schema=False)
+    def health_check():
+        return {"app": config.APP_NAME, "version": config.APP_VERSION}
+
     @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(config.FRONTEND_DIR / "index.html", headers={"Cache-Control": "no-cache"})
@@ -162,11 +166,30 @@ def _port_free(host: str, port: int) -> bool:
             return False
 
 
+def running_instance(port: int) -> bool:
+    """True if ClipFactory already answers on this port (then we only open the browser)."""
+    import json
+    import urllib.request
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never route localhost via a proxy
+    try:
+        with opener.open(f"http://127.0.0.1:{port}/api/health-check", timeout=1.5) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("app") == config.APP_NAME
+    except Exception:
+        return False
+
+
 def run() -> None:
     import uvicorn
 
     setup_logging()
     port = config.PORT
+    if running_instance(port):
+        url = f"http://127.0.0.1:{port}/"
+        print(f"ClipFactory уже запущен — открываю {url}")
+        if "--no-browser" not in sys.argv:
+            webbrowser.open(url)
+        return
     if not _port_free(config.HOST, port):
         for candidate in range(port + 1, port + 20):
             if _port_free(config.HOST, candidate):

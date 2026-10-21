@@ -87,3 +87,20 @@ def test_divider_line_drawn_on_split():
     assert "drawbox=x=0:y=1053:w=iw:h=6:color=black" in graph  # 55/45 split at y=1056
     _, graph, _, _ = build_filter_and_inputs(EpisodeRenderSpec(**base, divider=False))
     assert "drawbox" not in graph
+
+
+def test_safe_replace_falls_back_when_target_is_locked(tmp_path, monkeypatch):
+    import os
+    from backend.services import fsutil
+    src, dst = tmp_path / "new.mp4", tmp_path / "Part_01.mp4"
+    src.write_bytes(b"new")
+    dst.write_bytes(b"old")
+    real = os.replace
+
+    def locked(a, b):
+        if Path(b) == dst:
+            raise PermissionError("in use")
+        return real(a, b)
+    monkeypatch.setattr(fsutil.os, "replace", locked)
+    out = fsutil.safe_replace(src, dst, attempts=2, delay=0)
+    assert out != dst and out.read_bytes() == b"new" and dst.read_bytes() == b"old"

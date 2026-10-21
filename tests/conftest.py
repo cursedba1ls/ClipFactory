@@ -8,7 +8,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-_TMP = Path(tempfile.mkdtemp(prefix="clipfactory-tests-"))
+# CLIPFACTORY_TEST_TMP lets CI run the suite under a path with spaces and Cyrillic letters.
+_base = os.environ.get("CLIPFACTORY_TEST_TMP")
+if _base:
+    Path(_base).mkdir(parents=True, exist_ok=True)
+_TMP = Path(tempfile.mkdtemp(prefix="clipfactory-tests-", dir=_base or None))
 os.environ["CLIPFACTORY_STORAGE"] = str(_TMP / "storage")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

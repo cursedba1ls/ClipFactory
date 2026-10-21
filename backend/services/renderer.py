@@ -10,7 +10,7 @@ from typing import Callable
 from backend import config
 from backend.errors import UserError
 from backend.services import (
-    encoders, ffmpeg_utils, gameplay_manager, smart_crop, subtitle_generator, video_composer,
+    encoders, ffmpeg_utils, fsutil, gameplay_manager, smart_crop, subtitle_generator, video_composer,
 )
 from backend.services.video_splitter import EpisodeSpan, cut_window
 
@@ -256,11 +256,11 @@ def render_episode(
     if not verify["ok"]:
         tmp.unlink(missing_ok=True)
         raise UserError("Проверка результата не пройдена: " + "; ".join(verify["problems"]))
-    tmp.replace(paths["video"])
-    make_thumbnail(paths["video"], paths["thumb"], span.duration * 0.4)
+    video_path = fsutil.safe_replace(tmp, paths["video"])
+    make_thumbnail(video_path, paths["thumb"], span.duration * 0.4)
     return {
         **extra,
-        "video_path": str(paths["video"]),
+        "video_path": str(video_path),
         "thumb_path": str(paths["thumb"]) if paths["thumb"].is_file() else None,
         "verify": verify,
     }

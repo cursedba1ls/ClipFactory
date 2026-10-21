@@ -17,3 +17,5 @@ Thumbs.db
 .idea/
 .vscode/
 examples/output/
+dist/
+packaging/launcher/ClipFactory.pdb
