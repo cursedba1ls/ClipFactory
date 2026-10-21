@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from backend import config
 from backend.database import db
 from backend.jobs.queue import job_title
-from backend.services import downloader, renderer
+from backend.services import downloader, gameplay_manager, renderer
 
 INFO_FIELDS = ("duration", "video_duration", "width", "height", "fps", "is_vfr", "has_audio", "video_codec",
                "audio_codec", "size", "nb_frames", "container", "content_box", "focus")
@@ -44,6 +44,9 @@ def media_out(m: dict | None) -> dict | None:
         "info": {k: info.get(k) for k in INFO_FIELDS} if info else None,
         "usable_start": m.get("usable_start"),
         "usable_end": m.get("usable_end"),
+        "trim_start": m.get("trim_start"),
+        "trim_end": m.get("trim_end"),
+        "usable_range": list(gameplay_manager.gameplay_range(m)) if m["kind"] == "gameplay" and m.get("info") else None,
         "created_at": m["created_at"],
         "file_url": f"/api/media/{m['id']}/file" if m["status"] == "ready" else None,
     }

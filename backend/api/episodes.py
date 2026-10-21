@@ -13,7 +13,7 @@ from backend.database import db
 from backend.errors import UserError
 from backend.jobs.queue import manager
 from backend.models.schemas import ApproveIn, EpisodePatch, MarkPublishedIn
-from backend.services import renderer, subtitle_generator
+from backend.services import gameplay_manager, renderer, subtitle_generator
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 
@@ -60,7 +60,7 @@ def crop_sources(project: dict, e: dict, gp: dict | None) -> dict:
         out["main"] = {"url": f"/api/media/{main['id']}/frame?t={t:.1f}", "dims": media_dims(main),
                        "auto": {"x": ac.get("main_x", 0.5), "y": ac.get("main_y", 0.5)}}
     if gp and gp["status"] == "ready":
-        t = float(gp.get("usable_start") or 0) + float((e.get("gameplay") or {}).get("offset") or 0) + 1
+        t = gameplay_manager.gameplay_range(gp)[0] + float((e.get("gameplay") or {}).get("offset") or 0) + 1
         out["game"] = {"url": f"/api/media/{gp['id']}/frame?t={t:.1f}", "dims": media_dims(gp),
                        "auto": (gp.get("info") or {}).get("focus") or {"x": 0.5, "y": 0.5}}
     return out
@@ -91,7 +91,8 @@ def patch_episode(episode_id: str, body: EpisodePatch):
         g = db.get("media", body.gameplay.media_id) if body.gameplay.media_id.isalnum() else None
         if not g or g["kind"] != "gameplay" or g["status"] != "ready":
             raise UserError("Выбранный геймплей не найден или ещё не загружен.")
-        length = float(g.get("usable_end") or g["info"]["video_duration"]) - float(g.get("usable_start") or 0)
+        us, ue = gameplay_manager.gameplay_range(g)
+        length = ue - us
         if body.gameplay.random_offset or body.gameplay.offset is None:
             offset = round(random.uniform(0, max(0.0, length - float(e["duration"]))), 3)
         else:

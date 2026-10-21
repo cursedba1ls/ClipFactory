@@ -203,8 +203,7 @@ def render_episode(
     gp_path, pieces, gp_audio = None, [], False
     if gameplay_media and gameplay_media.get("path") and Path(gameplay_media["path"]).is_file():
         gp = episode.get("gameplay") or {}
-        ustart = float(gameplay_media.get("usable_start") or 0.0)
-        uend = float(gameplay_media.get("usable_end") or (gameplay_media.get("info") or {}).get("duration") or 0)
+        ustart, uend = gameplay_manager.gameplay_range(gameplay_media)
         if uend - ustart > gameplay_manager.MIN_PIECE:
             gp_path = gameplay_media["path"]
             pieces = gameplay_manager.plan_pieces(ustart, uend, float(gp.get("offset") or 0.0), span.duration)

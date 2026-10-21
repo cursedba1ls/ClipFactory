@@ -2,12 +2,21 @@ import { api } from "../api.js";
 import { mediaImport } from "../media-import.js";
 import { cropEditor, focusOf, sourceFromMedia } from "../crop-editor.js";
 import { settingsForm } from "../settings-form.js";
+import { clearDraft, debounce, draftTime, loadDraft, saveDraft } from "../drafts.js";
 import { $, $$, esc, fmtDuration, icon, timelineHtml, toast, toastError, plural } from "../ui.js";
+
+const DRAFT_KEY = "new-project";
 
 export async function render(root) {
   const [settingsResp, library] = await Promise.all([api.get("/api/settings"), api.get("/api/media?kind=gameplay")]);
   const defaults = settingsResp.settings.defaults;
-  const selected = new Set();
+  const draft = loadDraft(DRAFT_KEY);
+  const saved = draft ? draft.state : null;
+  const selected = new Set(saved?.gameplay_ids || []);
+  let cropDraft = saved?.crop || null;
+  const savedMain = saved?.main_media_id
+    ? await api.get(`/api/media/${saved.main_media_id}`).catch(() => null)
+    : null;
 
   root.innerHTML = `
     <div class="page-head"><div><h1>Новый проект</h1>
@@ -24,13 +33,13 @@ export async function render(root) {
     <div class="card mt hidden" id="crop-card"><div class="card-head"><h2>Кадрирование</h2><span class="hint">автоматически или вручную — перетащите рамку</span></div><div id="crop"></div></div>
     <div class="card mt"><div class="card-head"><h2>4. Настройки</h2></div>
       <label class="field" style="margin-bottom:16px"><span>Название проекта (необязательно)</span>
-        <input type="text" id="title" maxlength="200" placeholder="По умолчанию — название видео"></label>
+        <input type="text" id="title" maxlength="200" placeholder="По умолчанию — название видео" value="${esc(saved?.title || "")}"></label>
       <div id="settings"></div></div>
     <div class="row mt" style="justify-content:flex-end">
       <span class="muted small" id="create-hint"></span>
       <button class="btn primary lg" id="create" disabled>${icon.play}Создать видео</button></div>`;
 
-  const form = settingsForm(defaults, { showCaption: true });
+  const form = settingsForm(saved?.settings || defaults, { showCaption: true });
   $("#settings", root).appendChild(form.el);
 
   let cropEd = null, cropKey = "";
@@ -44,7 +53,7 @@ export async function render(root) {
     const s = form.getValue();
     if (key === cropKey && cropEd) { cropEd.setLayout(s.layout); cropEd.setDivider(s.divider); return; }
     cropKey = key;
-    const prev = cropEd ? cropEd.getValue() : (defaults.crop || {});
+    const prev = cropEd ? cropEd.getValue() : (cropDraft || defaults.crop || {});
     $("#crop", root).innerHTML = "";
     cropEd = cropEditor({
       main: sourceFromMedia(m), game: sourceFromMedia(g, 0.1), layout: s.layout, crop: prev, divider: s.divider,
@@ -88,7 +97,11 @@ export async function render(root) {
     if (del) del.onclick = async () => { try { await api.del(`/api/media/${m.id}/subtitles`); } catch (e) { toastError(e); } updateSubs(); };
   }
 
-  const mainImp = mediaImport({ kind: "main", onChange: () => { updatePlan(); updateButton(); updateCrop(); updateSubs(); } });
+  const mainImp = mediaImport({
+    kind: "main",
+    initial: savedMain,
+    onChange: () => { updatePlan(); updateButton(); updateCrop(); updateSubs(); schedulePersist(); },
+  });
   $("#main-import", root).appendChild(mainImp.el);
 
   const gpImp = mediaImport({
@@ -97,6 +110,7 @@ export async function render(root) {
       if (m && m.status !== "error") selected.add(m.id);
       refreshLibrary().then(updateCrop);
       updateButton();
+      schedulePersist();
     },
   });
   $("#gp-import", root).appendChild(gpImp.el);
@@ -121,6 +135,7 @@ export async function render(root) {
       it.classList.toggle("on", selected.has(id));
       updateButton();
       updateCrop();
+      schedulePersist();
     });
   }
   async function refreshLibrary() {
@@ -178,6 +193,7 @@ export async function render(root) {
         settings: { ...form.getValue(), ...(cropEd ? { crop: cropEd.getValue() } : {}) },
         start: true,
       });
+      clearDraft(DRAFT_KEY);
       toast("Проект создан, обработка запущена", "ok");
       location.hash = `#/project/${p.id}`;
     } catch (e) {
@@ -186,6 +202,44 @@ export async function render(root) {
     }
   };
 
+  // ----- drafts: everything typed or chosen here is kept until the project is created -----
+  function currentDraft() {
+    return {
+      title: $("#title", root).value,
+      settings: form.getValue(),
+      main_media_id: mainImp.media?.id || null,
+      gameplay_ids: [...selected],
+      crop: cropEd ? cropEd.getValue() : cropDraft,
+    };
+  }
+  function persist() {
+    if (!$("#title", root)) return;  // the page was left; never write another page's state
+    const d = currentDraft();
+    const empty = !d.title.trim() && !d.main_media_id && !d.gameplay_ids.length;
+    if (empty) clearDraft(DRAFT_KEY);
+    else saveDraft(DRAFT_KEY, d);
+  }
+  const schedulePersist = debounce(persist);
+  const draftEvents = ["input", "change", "pointerup", "click", "change-settings"];
+  for (const type of draftEvents) root.addEventListener(type, schedulePersist);
+
+  if (draft && (saved.main_media_id || saved.gameplay_ids?.length || saved.title)) {
+    const banner = document.createElement("div");
+    banner.className = "alert info";
+    banner.style.marginBottom = "16px";
+    banner.innerHTML = `${icon.info}<div class="grow">Восстановлен черновик от ${esc(draftTime(draft))}. Всё, что вы вводили, сохранено.</div>
+      <button class="btn sm ghost" type="button" data-fresh>Начать заново</button>`;
+    root.querySelector(".page-head").after(banner);
+    banner.querySelector("[data-fresh]").onclick = () => { clearDraft(DRAFT_KEY); location.reload(); };
+  }
+
   updateButton();
-  return () => { mainImp.destroy(); gpImp.destroy(); };
+  updatePlan();
+  updateCrop();
+  updateSubs();
+  return () => {
+    for (const type of draftEvents) root.removeEventListener(type, schedulePersist);
+    mainImp.destroy();
+    gpImp.destroy();
+  };
 }

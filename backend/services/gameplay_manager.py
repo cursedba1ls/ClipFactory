@@ -10,6 +10,23 @@ import random
 from dataclasses import dataclass
 
 MIN_PIECE = 0.25  # seconds; shorter leftovers are skipped to avoid empty segments
+MIN_TRIM = 3.0    # the user's trimmed fragment of gameplay must be at least this long
+
+
+def gameplay_range(media: dict) -> tuple[float, float]:
+    """The part of a gameplay clip that may be used: black edges removed, then the user's trim applied."""
+    info = media.get("info") or {}
+    duration = float(info.get("video_duration") or info.get("duration") or 0)
+    base_start = float(media.get("usable_start") or 0.0)
+    base_end = float(media.get("usable_end") or duration)
+    start, end = base_start, base_end
+    if media.get("trim_start") is not None:
+        start = max(start, float(media["trim_start"]))
+    if media.get("trim_end") is not None:
+        end = min(end, float(media["trim_end"]))
+    if end - start < MIN_TRIM:  # trim left nothing usable (e.g. only black frames): ignore it
+        start, end = base_start, base_end
+    return round(start, 3), round(end, 3)
 SAFETY_MARGIN = 0.5  # extra gameplay beyond the episode end, trimmed in the filter graph
 
 

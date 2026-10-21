@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS media (
     error TEXT,
     usable_start REAL,
     usable_end REAL,
+    trim_start REAL,        -- user trim (seconds) for long gameplay; NULL = no trim
+    trim_end REAL,
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_media_kind ON media(kind);
@@ -153,7 +155,7 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
-MIGRATIONS = [("episodes", "auto_crop", "TEXT")]
+MIGRATIONS = [("episodes", "auto_crop", "TEXT"), ("media", "trim_start", "REAL"), ("media", "trim_end", "REAL")]
 
 
 def init_db() -> None:

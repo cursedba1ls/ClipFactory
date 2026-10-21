@@ -1,6 +1,7 @@
 // Episode editor modal: subtitle text/timing, style, crop, gameplay, numbering → save and re-render one part.
 import { api } from "./api.js";
 import { cropEditor } from "./crop-editor.js";
+import { clearDraft, debounce, draftTime, loadDraft, saveDraft } from "./drafts.js";
 import { PRESETS } from "./settings-form.js";
 import { $, $$, esc, fmtDuration, icon, modal, toast, toastError } from "./ui.js";
 
@@ -13,6 +14,16 @@ const POSITIONS = [
 
 const num = (v, d = 2) => (Math.round(Number(v) * 10 ** d) / 10 ** d).toFixed(d);
 
+// Crop values compared on rounded numbers only, so a restored draft matches what the server has.
+function normCrop(c = {}) {
+  const r = (v, d) => Math.round((Number(v ?? d) + Number.EPSILON) * 1000) / 1000;
+  return {
+    mode: c.mode || "auto",
+    main_x: r(c.main_x, 0.5), main_y: r(c.main_y, 0.5), main_zoom: r(c.main_zoom, 1),
+    game_x: r(c.game_x, 0.5), game_y: r(c.game_y, 0.5), game_zoom: r(c.game_zoom, 1),
+  };
+}
+
 export async function openEditor(episodeId, onSaved) {
   const [ep, library] = await Promise.all([api.get(`/api/episodes/${episodeId}`), api.get("/api/media?kind=gameplay")]);
   const eff = ep.effective;
@@ -22,6 +33,8 @@ export async function openEditor(episodeId, onSaved) {
   let layout = eff.layout || "50/50";
   let cues = structuredClone(ep.cues || []);
   let touched = { cues: false, style: false, crop: false, numbering: false, gameplay: false };
+  let cropDraft = null;   // crop values restored from a local draft
+  let saved = false;      // after a successful save the draft is gone and must not come back
   let tab = "subs";
   const topPct = { "50/50": 50, "55/45": 55, "60/40": 60 };
 
@@ -47,6 +60,11 @@ export async function openEditor(episodeId, onSaved) {
     title: `Редактирование: часть ${ep.number}/${ep.total}`, body, wide: true,
     footer: `<button class="btn ghost" data-reset>Сбросить к настройкам проекта</button><div style="flex:1"></div>
       <button class="btn" data-save>Сохранить</button><button class="btn primary" data-save-render>${icon.refresh}Сохранить и пересоздать</button>`,
+    onClose: () => {
+      if (!saved && serialize() !== baseline) {
+        toast("Несохранённые правки остались черновиком — откройте часть снова, и они появятся", "ok", 6000);
+      }
+    },
   });
   const player = $("[data-player]", body);
 
@@ -195,12 +213,12 @@ export async function openEditor(episodeId, onSaved) {
     const r = eff.crop_resolved || {};
     cropEd = cropEditor({
       main: src.main, game: src.game, layout,
-      crop: { ...r, mode: crop.mode || "auto" },
+      crop: cropDraft || { ...r, mode: crop.mode || "auto" },
       auto: { main_x: src.main?.auto?.x, main_y: src.main?.auto?.y, game_x: src.game?.auto?.x, game_y: src.game?.auto?.y },
       hint: "Видео масштабируется без искажений. Рамка показывает, что попадёт в кадр этой части.",
     });
     $("[data-crop-host]", pane).appendChild(cropEd.el);
-    cropStart = JSON.stringify(cropEd.getValue());
+    cropStart = JSON.stringify(normCrop({ ...r, mode: crop.mode || "auto" }));
     $("[data-layout]", pane).onclick = (e) => {
       const b = e.target.closest("button");
       if (!b) return;
@@ -266,6 +284,58 @@ export async function openEditor(episodeId, onSaved) {
   drawCues(); drawStyle(); drawCrop(); drawGame(); drawNum();
   showTab("subs");
 
+  // ---------- local drafts: unsaved edits survive closing the window or a reload ----------
+  const draftKey = `episode:${episodeId}`;
+  const initial = {
+    cues: structuredClone(cues), st: { ...st }, nb: { ...nb }, layout, gp: { ...gp },
+    crop: normCrop(cropEd ? cropEd.getValue() : {}),
+  };
+  function serialize() {
+    return JSON.stringify({ cues, st, nb, layout, gp, crop: normCrop(cropEd ? cropEd.getValue() : cropDraft || {}) });
+  }
+  const baseline = serialize();
+  const persistDraft = () => {
+    if (saved) return;
+    const state = serialize();
+    if (state === baseline) clearDraft(draftKey);
+    else saveDraft(draftKey, JSON.parse(state), baseline);
+  };
+  const scheduleDraft = debounce(persistDraft);
+  for (const type of ["input", "change", "click", "pointerup"]) body.addEventListener(type, scheduleDraft);
+
+  function applyDraft(s) {
+    cues = structuredClone(s.cues);
+    Object.assign(st, s.st);
+    Object.assign(nb, s.nb);
+    layout = s.layout;
+    gp = { ...s.gp };
+    cropDraft = s.crop;
+    touched = {
+      cues: JSON.stringify(cues) !== JSON.stringify(initial.cues),
+      style: JSON.stringify(st) !== JSON.stringify(initial.st),
+      crop: JSON.stringify(normCrop(cropDraft)) !== JSON.stringify(initial.crop) || layout !== initial.layout,
+      numbering: JSON.stringify(nb) !== JSON.stringify(initial.nb),
+      gameplay: gp.media_id !== initial.gp.media_id || Number(gp.offset) !== Number(initial.gp.offset) || !!gp.random,
+    };
+    drawCues(); drawStyle(); drawCrop(); drawGame(); drawNum();
+  }
+
+  const draft = loadDraft(draftKey);
+  if (draft && JSON.stringify(draft.state) !== baseline) {
+    const stale = draft.base !== baseline;
+    const banner = document.createElement("div");
+    banner.className = `alert ${stale ? "warn" : "info"}`;
+    banner.innerHTML = `${icon.info}<div class="grow">Есть несохранённый черновик от ${esc(draftTime(draft))}.
+      ${stale ? "Часть уже сохранена с другими настройками: восстановление заменит их." : "Восстановить правки?"}</div>
+      <button class="btn sm primary" type="button" data-restore>Восстановить</button>
+      <button class="btn sm ghost" type="button" data-discard>Отбросить</button>`;
+    body.before(banner);
+    banner.querySelector("[data-restore]").onclick = () => { applyDraft(draft.state); banner.remove(); toast("Черновик восстановлен", "ok", 2500); };
+    banner.querySelector("[data-discard]").onclick = () => { clearDraft(draftKey); banner.remove(); };
+  } else if (draft) {
+    clearDraft(draftKey);
+  }
+
   async function save(render) {
     const payload = { render };
     if (touched.cues) {
@@ -284,7 +354,7 @@ export async function openEditor(episodeId, onSaved) {
       };
     }
     const cropNow = cropEd ? cropEd.getValue() : null;
-    if (cropNow && JSON.stringify(cropNow) !== cropStart) { overrides.crop = cropNow; overrides.layout = layout; }
+    if (cropNow && JSON.stringify(normCrop(cropNow)) !== cropStart) { overrides.crop = cropNow; overrides.layout = layout; }
     else if (touched.crop) { overrides.layout = layout; }
     if (touched.numbering) {
       if (!nb.format.includes("{n}")) return toastError(new Error("Текст нумерации должен содержать {n}."));
@@ -296,6 +366,8 @@ export async function openEditor(episodeId, onSaved) {
     }
     try {
       await api.patch(`/api/episodes/${episodeId}`, payload);
+      saved = true;
+      clearDraft(draftKey);
       toast(render ? "Изменения сохранены, часть пересоздаётся" : "Изменения сохранены", "ok");
       m.close();
       onSaved && onSaved();
@@ -306,6 +378,8 @@ export async function openEditor(episodeId, onSaved) {
   $("[data-reset]", m.el).onclick = async () => {
     try {
       await api.patch(`/api/episodes/${episodeId}`, { reset_overrides: true });
+      saved = true;
+      clearDraft(draftKey);
       toast("Индивидуальные настройки части сброшены", "ok");
       m.close();
       onSaved && onSaved();

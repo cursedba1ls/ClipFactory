@@ -188,6 +188,38 @@ def _load_model(model_size: str, device: str):
         return model
 
 
+SKIP_STEP = 1.0          # seconds to move past a failing spot when recognition breaks there
+MAX_RECOVERIES = 40      # hard limit so a broken file cannot loop forever
+
+_CUDA_MARKERS = ("cuda", "cublas", "cudnn", "not found or cannot be loaded")
+_VAD_MARKERS = ("onnx", "silero", "vad")
+
+
+def _describe(exc: BaseException) -> str:
+    """Never empty: type name plus message (or repr) so the user can see what broke."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else f"{type(exc).__name__}: {exc!r}"
+
+
+def _valid_word(w) -> dict | None:
+    """Convert one recognised word; None when it is unusable (skipped silently)."""
+    try:
+        text = (w.word or "").strip()
+        start, end = float(w.start), float(w.end)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not text or not (math.isfinite(start) and math.isfinite(end)):
+        return None
+    if end < start:
+        end = start
+    try:
+        prob = float(getattr(w, "probability", 1.0) or 0)
+    except (TypeError, ValueError):
+        prob = 0.0
+    return {"start": round(start, 3), "end": round(end, 3), "text": text,
+            "p": round(prob, 3) if math.isfinite(prob) else 0.0}
+
+
 def transcribe(
     audio_path: str | Path,
     model_size: str = "small",
@@ -197,51 +229,96 @@ def transcribe(
     cancel_event: threading.Event | None = None,
     duration: float | None = None,
 ) -> dict:
-    """Transcribe with faster-whisper; returns {"language", "words", "segments"}."""
+    """Transcribe with faster-whisper; returns {"language", "words", "segments", "skipped"}.
+
+    Recognition is resilient: when the engine fails on some part of the audio, that part
+    is skipped (listed in "skipped") and recognition continues from the next position.
+    Only a failure on the whole file raises UserError, and its details say what went wrong.
+    """
     if not whisper_available():
         raise UserError("Модуль распознавания речи faster-whisper не установлен. Запустите setup.bat ещё раз.")
     model = _load_model(model_size, device)
+    current_device = device
     lang = language if language in ("ru", "en") else None
-    try:
-        segments_iter, info = model.transcribe(
-            str(audio_path),
-            language=lang,
-            word_timestamps=True,
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 500},
-            beam_size=5,
-            condition_on_previous_text=False,
-        )
-    except Exception as exc:
-        raise UserError("Ошибка распознавания речи.", detail=str(exc)) from exc
-    total = duration or getattr(info, "duration", None) or 0
+    total = float(duration or 0)
     words: list[dict] = []
     segments: list[dict] = []
-    for seg in segments_iter:
+    skipped: list[dict] = []
+    detected = {"language": lang, "probability": 0.0}
+    pos = 0.0
+    use_vad = True
+    recoveries = 0
+    last_error: str | None = None
+
+    while True:
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled()
-        seg_words = []
-        for w in seg.words or []:
-            text = (w.word or "").strip()
-            if not text:
+        clip = None if pos <= 0 else [round(pos, 3), total or 10 ** 6]
+        try:
+            kwargs = dict(language=lang, word_timestamps=True, vad_filter=use_vad,
+                          beam_size=5, condition_on_previous_text=False)
+            if use_vad:
+                kwargs["vad_parameters"] = {"min_silence_duration_ms": 500}
+            if clip:
+                kwargs["clip_timestamps"] = clip
+            seg_iter, info = model.transcribe(str(audio_path), **kwargs)
+            if not total:
+                total = float(getattr(info, "duration", 0) or 0)
+            if lang is None:
+                detected = {"language": getattr(info, "language", None),
+                            "probability": float(getattr(info, "language_probability", 0) or 0)}
+            for seg in seg_iter:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise Cancelled()
+                seg_words = [w for w in (_valid_word(x) for x in (seg.words or [])) if w]
+                text = (seg.text or "").strip()
+                if not seg_words and text:
+                    seg_words = interpolate_words(text, float(seg.start), float(seg.end))
+                words.extend(seg_words)
+                segments.append({"start": round(float(seg.start), 3), "end": round(float(seg.end), 3),
+                                 "text": text})
+                pos = max(pos, float(seg.end))
+                if on_progress and total:
+                    on_progress(min(1.0, pos / total))
+            break  # the whole file was processed
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the engine raises many library-specific types
+            recoveries += 1
+            last_error = _describe(exc)
+            log.warning("recognition failed at %.1f s (attempt %d): %s", pos, recoveries, last_error,
+                        exc_info=True)
+            msg = last_error.lower()
+            if recoveries > MAX_RECOVERIES:
+                break
+            if current_device != "cpu" and any(m in msg for m in _CUDA_MARKERS):
+                log.warning("GPU failed during recognition, continuing on CPU")
+                model = _load_model(model_size, "cpu")
+                current_device = "cpu"
                 continue
-            item = {"start": round(float(w.start), 3), "end": round(float(w.end), 3),
-                    "text": text, "p": round(float(getattr(w, "probability", 1.0) or 0), 3)}
-            seg_words.append(item)
-        if not seg_words and seg.text.strip():
-            seg_words = interpolate_words(seg.text, float(seg.start), float(seg.end))
-        words.extend(seg_words)
-        segments.append({"start": round(float(seg.start), 3), "end": round(float(seg.end), 3),
-                         "text": seg.text.strip()})
-        if on_progress and total:
-            on_progress(min(1.0, float(seg.end) / total))
+            if use_vad and any(m in msg for m in _VAD_MARKERS):
+                use_vad = False  # voice-activity detection broke: recognise without it
+                continue
+            start = pos
+            pos = pos + SKIP_STEP
+            if total and pos >= total:
+                skipped.append({"start": round(start, 2), "end": round(total, 2), "error": last_error})
+                break
+            skipped.append({"start": round(start, 2), "end": round(pos, 2), "error": last_error})
+
+    if not words and last_error and skipped:
+        raise UserError(
+            "Ошибка распознавания речи.",
+            detail=f"Речь не распознана ни в одном участке. Последняя ошибка: {last_error}",
+        )
     words.sort(key=lambda w: (w["start"], w["end"]))
     return {
-        "language": getattr(info, "language", lang),
-        "language_probability": round(float(getattr(info, "language_probability", 0) or 0), 3),
+        "language": detected["language"],
+        "language_probability": round(detected["probability"], 3),
         "model": model_size,
         "words": words,
         "segments": segments,
+        "skipped": skipped,
     }
 
 

@@ -90,7 +90,10 @@ class MediaUrlIn(BaseModel):
 
 
 class MediaPatch(BaseModel):
-    title: str = Field(max_length=200)
+    title: Optional[str] = Field(default=None, max_length=200)
+    trim_start: Optional[float] = Field(default=None, ge=0, le=86400 * 4)
+    trim_end: Optional[float] = Field(default=None, ge=0, le=86400 * 4)
+    reset_trim: bool = False  # use the whole clip again
 
 
 class ProjectCreate(BaseModel):

@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from backend import config
 from backend.api.common import get_or_404, job_out, media_out, safe_file_response
 from backend.database import db
+from backend.services import gameplay_manager
 from backend.errors import UserError
 from backend.jobs.queue import manager
 from backend.models.schemas import MediaPatch, MediaUrlIn
@@ -104,10 +105,71 @@ async def upload(request: Request, kind: str = Query(pattern="^(main|gameplay)$"
 
 
 @router.patch("/{media_id}")
-def rename_media(media_id: str, body: MediaPatch):
-    get_or_404("media", media_id, "Видео")
-    db.update("media", media_id, {"title": body.title.strip() or None})
+def patch_media(media_id: str, body: MediaPatch):
+    m = get_or_404("media", media_id, "Видео")
+    values: dict = {}
+    if body.title is not None:
+        values["title"] = body.title.strip() or None
+    trim_changed = False
+    if body.reset_trim:
+        values.update({"trim_start": None, "trim_end": None})
+        trim_changed = True
+    elif body.trim_start is not None or body.trim_end is not None:
+        if m["kind"] != "gameplay":
+            raise UserError("Обрезать можно только видео геймплея.")
+        if m["status"] != "ready" or not m.get("info"):
+            raise UserError("Видео ещё не загружено и не проанализировано.")
+        duration = float(m["info"].get("video_duration") or m["info"].get("duration") or 0)
+        start = float(body.trim_start if body.trim_start is not None else (m.get("trim_start") or 0.0))
+        end = float(body.trim_end if body.trim_end is not None else (m.get("trim_end") or duration))
+        if end > duration + 0.05:
+            raise UserError(f"Конец обрезки {fmt_time(end)} дальше длины видео ({fmt_time(duration)}).")
+        if end - start < gameplay_manager.MIN_TRIM:
+            raise UserError(f"Фрагмент слишком короткий: нужно минимум {int(gameplay_manager.MIN_TRIM)} секунды.")
+        values.update({
+            "trim_start": round(start, 3) if start > 0.05 else None,
+            "trim_end": round(min(end, duration), 3) if end < duration - 0.05 else None,
+        })
+        trim_changed = True
+    if values:
+        db.update("media", media_id, values)
+    if trim_changed:
+        _refocus_gameplay(media_id)
+        _outdate_episodes_using(media_id)
     return media_out(db.get("media", media_id))
+
+
+def fmt_time(seconds: float) -> str:
+    m, s = divmod(int(round(seconds)), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _refocus_gameplay(media_id: str) -> None:
+    """Automatic crop focus is measured on the fragment that will actually be used."""
+    m = db.get("media", media_id)
+    info = dict(m.get("info") or {})
+    us, ue = gameplay_manager.gameplay_range(m)
+    info["focus"] = smart_crop.focus(m["path"], us, min(60.0, max(0.5, ue - us)),
+                                     info["width"], info["height"], 1080, 960, info.get("content_box"), count=24)
+    db.update("media", media_id, {"info": info})
+
+
+def _outdate_episodes_using(media_id: str) -> None:
+    """Episodes that used this clip must be re-cut from the new range: re-chosen on the next build."""
+    rows = db.query("episodes", "gameplay LIKE ?", (f'%"{media_id}"%',))
+    for e in rows:
+        gp = e.get("gameplay") or {}
+        if gp.get("media_id") != media_id:
+            continue
+        values = {"updated_at": db.now()}
+        if gp.get("manual"):
+            values["gameplay"] = {**gp, "offset": 0.0}  # manual choice stays; start over from the new start
+        else:
+            values["gameplay"] = None
+        if e["status"] == "ready":
+            values["status"] = "outdated"
+        db.update("episodes", e["id"], values)
 
 
 @router.delete("/{media_id}")

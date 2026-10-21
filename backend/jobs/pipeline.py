@@ -189,6 +189,10 @@ def extract_audio(source: str, out: Path, duration: float, ctx: JobContext, p0: 
     tmp.replace(out)
 
 
+def fmt_span(seconds: float) -> str:
+    return video_splitter.format_timecode(float(seconds))
+
+
 def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: JobContext,
                       p0: float, p1: float, force: bool = False, rebuild: bool = False) -> dict | None:
     """Transcribe once (cached) and fill episode cues.
@@ -264,6 +268,12 @@ def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: 
                  for w in raw.get("words", [])]
         transcript = {"language": raw.get("language"), "model": raw.get("model"), "words": words,
                       "segments": raw.get("segments", [])}
+        skipped = raw.get("skipped") or []
+        if skipped:
+            spans = ", ".join(f"{fmt_span(x['start'])}–{fmt_span(x['end'])}" for x in skipped[:6])
+            more = f" и ещё {len(skipped) - 6}" if len(skipped) > 6 else ""
+            _add_warning(project["id"], f"Распознавание пропустило участки речи ({spans}{more}): "
+                                        "субтитров там нет. Их можно добавить вручную в редакторе части.")
         subtitle_generator.save_json(tpath, transcript)
         db.update("projects", project["id"], {"transcript_path": str(tpath),
                                               "transcript_language": transcript.get("language")})
@@ -327,8 +337,10 @@ def ensure_gameplay(project: dict, episodes: list[dict], clips: list[dict]) -> N
     if not missing:
         return
     settings = project["settings"]
-    specs = [{"id": c["id"], "usable_start": float(c.get("usable_start") or 0),
-              "usable_end": float(c.get("usable_end") or c["info"]["video_duration"])} for c in clips]
+    specs = []
+    for c in clips:
+        us, ue = gameplay_manager.gameplay_range(c)
+        specs.append({"id": c["id"], "usable_start": us, "usable_end": ue})
     choices = gameplay_manager.choose_gameplay(specs, [e["duration"] for e in episodes],
                                                settings.get("gameplay_mode", "continuous"),
                                                int(settings.get("seed") or 0))
