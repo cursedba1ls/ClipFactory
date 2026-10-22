@@ -10,7 +10,7 @@ const DRAFT_KEY = "new-project";
 export async function render(root) {
   const [settingsResp, library] = await Promise.all([api.get("/api/settings"), api.get("/api/media?kind=gameplay")]);
   const defaults = settingsResp.settings.defaults;
-  const draft = loadDraft(DRAFT_KEY);
+  const draft = await loadDraft(DRAFT_KEY);
   const saved = draft ? draft.state : null;
   const selected = new Set(saved?.gameplay_ids || []);
   let cropDraft = saved?.crop || null;

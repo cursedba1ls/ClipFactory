@@ -1,67 +1,31 @@
 name: Windows
 
+# Every push: the test suite on Windows, then the real installer is built, installed, launched, updated
+# and uninstalled on a clean Windows machine (packaging/tests/e2e_installed.py).
+# A tag vX.Y.Z (equal to backend/version.py) additionally publishes the GitHub Release that installed
+# copies update from. See RELEASING.md.
+
 on:
   push:
     branches: [main, claude/clipfactory-app]
+    tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  windows:
+  tests:
     runs-on: windows-latest
-    timeout-minutes: 75
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install FFmpeg
         run: choco install ffmpeg -y --no-progress
-
-      - name: Install the Zig compiler for the launcher
-        run: python -m pip install ziglang
-
-      - name: Build the user package (ClipFactory.zip)
-        run: python packaging/build_package.py
-
-      - name: Unpack into a folder with spaces and Cyrillic letters
-        shell: pwsh
-        run: |
-          Expand-Archive dist/ClipFactory.zip -DestinationPath "C:\Мои программы"
-          Get-ChildItem "C:\Мои программы\ClipFactory" | Format-Table Name, Length
-
-      - name: Run setup.bat exactly as the launcher does
-        shell: pwsh
-        run: |
-          Set-Location "C:\Мои программы\ClipFactory\app"
-          cmd /c "setup.bat < nul"
-          if ($LASTEXITCODE -ne 0) { throw "setup.bat failed: $LASTEXITCODE" }
-          if (-not (Test-Path ".venv\Scripts\python.exe")) { throw ".venv was not created" }
-
-      - name: Start ClipFactory, check the API, check single-instance behaviour
-        shell: pwsh
-        run: |
-          $app = "C:\Мои программы\ClipFactory\app"
-          $py = "$app\.venv\Scripts\python.exe"
-          $srv = Start-Process -FilePath $py -ArgumentList "-m", "backend.main", "--no-browser" -WorkingDirectory $app -PassThru
-          $ok = $false
-          for ($i = 0; $i -lt 30; $i++) {
-            Start-Sleep 1
-            try { $r = Invoke-RestMethod http://127.0.0.1:8765/api/health-check; if ($r.app -eq "ClipFactory") { $ok = $true; break } } catch {}
-          }
-          if (-not $ok) { throw "server did not start" }
-          $s = Invoke-RestMethod http://127.0.0.1:8765/api/system
-          $s | ConvertTo-Json -Depth 5
-          if (-not $s.ffmpeg.libass) { throw "FFmpeg without libass" }
-          if (-not $s.whisper_installed) { throw "faster-whisper not installed" }
-          Push-Location $app
-          & $py -m backend.main --no-browser
-          Pop-Location
-          if ($LASTEXITCODE -ne 0) { throw "second instance failed" }
-          Stop-Process -Id $srv.Id
-
-      - name: Full test suite (storage under a Cyrillic path)
+      - name: Test suite (storage under a path with spaces and Cyrillic letters)
         shell: pwsh
         env:
           CLIPFACTORY_TEST_TMP: C:\Тест ClipFactory
@@ -70,8 +34,115 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pytest -q -x --durations=10
 
-      - name: Upload the package
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build tools
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements-build.txt
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Make sure the WebView2 runtime is present (it is on Windows 10/11 desktops)
+        shell: pwsh
+        run: |
+          $k = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+          if (Test-Path $k) { "WebView2 " + (Get-ItemProperty $k).pv } else { choco install webview2-runtime -y --no-progress }
+      - name: Version
+        id: v
+        shell: pwsh
+        run: |
+          $v = python -c "from backend.version import VERSION; print(VERSION)"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          $p = $v.Split("-")[0].Split(".")
+          "next=$($p[0]).$($p[1]).$([int]$p[2] + 1)-e2e" >> $env:GITHUB_OUTPUT
+      - name: Throw-away update key for the end-to-end test
+        id: key
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build\e2e | Out-Null
+          $pub = python -c "import base64;from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey as K;from cryptography.hazmat.primitives import serialization as s;k=K.generate();open('build/e2e/key.txt','w').write(base64.b64encode(k.private_bytes(s.Encoding.Raw,s.PrivateFormat.Raw,s.NoEncryption())).decode());print(base64.b64encode(k.public_key().public_bytes(s.Encoding.Raw,s.PublicFormat.Raw)).decode())"
+          "pub=$pub" >> $env:GITHUB_OUTPUT
+      - name: Build the app and the test installers (current and next version)
+        shell: pwsh
+        run: |
+          python packaging/build_windows.py --channel test --extra-public-key "${{ steps.key.outputs.pub }}" --allow-insecure-updates
+          python packaging/build_windows.py --reuse-app --app-dir-name ClipFactoryNext --version "${{ steps.v.outputs.next }}" --channel test --extra-public-key "${{ steps.key.outputs.pub }}" --allow-insecure-updates
+          Get-ChildItem dist | Format-Table Name, Length
+      - name: End-to-end on Windows (install, launch, render, update, uninstall)
+        shell: pwsh
+        run: |
+          python packaging/tests/e2e_installed.py `
+            --setup-a "dist/ClipFactory-Setup-${{ steps.v.outputs.version }}.exe" `
+            --setup-b "dist/ClipFactory-Setup-${{ steps.v.outputs.next }}.exe" `
+            --version-a "${{ steps.v.outputs.version }}" --version-b "${{ steps.v.outputs.next }}" `
+            --key-file build/e2e/key.txt --pub-key "${{ steps.key.outputs.pub }}"
+      - name: Release installer (same tested program, release settings)
+        shell: pwsh
+        run: |
+          Remove-Item dist\ClipFactory-Setup-*.exe, dist\*.sha256 -ErrorAction SilentlyContinue
+          python packaging/build_windows.py --reuse-app --channel stable
+          Get-ChildItem dist\ClipFactory-Setup-*.exe | Format-Table Name, Length
+      - name: Upload the installer
         uses: actions/upload-artifact@v4
         with:
-          name: ClipFactory-windows
-          path: dist/ClipFactory.zip
+          name: ClipFactory-installer
+          path: |
+            dist/ClipFactory-Setup-*.exe
+            dist/ClipFactory-Setup-*.exe.sha256
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            build/e2e-logs
+            ${{ env.LOCALAPPDATA }}\ClipFactory\logs
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [tests, installer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ClipFactory-installer
+          path: dist
+      - name: Tag must match backend/version.py
+        id: v
+        run: |
+          V=$(python -c "from backend.version import VERSION; print(VERSION)")
+          test "v$V" = "${GITHUB_REF_NAME}" || { echo "::error::tag ${GITHUB_REF_NAME} != version $V"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: Sign the update manifest
+        env:
+          CLIPFACTORY_UPDATE_KEY: ${{ secrets.CLIPFACTORY_UPDATE_KEY }}
+        run: |
+          pip install "cryptography>=42"
+          if [ -z "$CLIPFACTORY_UPDATE_KEY" ]; then
+            echo "::warning::Secret CLIPFACTORY_UPDATE_KEY is not set: the release is published without latest.json, installed copies will not be offered this version."
+          else
+            python packaging/make_manifest.py "dist/ClipFactory-Setup-${{ steps.v.outputs.version }}.exe" --out dist/latest.json
+          fi
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=${{ steps.v.outputs.version }}
+          python -c "import sys; sys.path.insert(0, 'packaging'); from make_manifest import release_notes; print(release_notes('$V') or 'ClipFactory $V')" > notes.md
+          PRE=""; case "$V" in *-*) PRE="--prerelease";; esac
+          FILES="dist/ClipFactory-Setup-$V.exe dist/ClipFactory-Setup-$V.exe.sha256"
+          [ -f dist/latest.json ] && FILES="$FILES dist/latest.json"
+          gh release create "v$V" $FILES --title "ClipFactory $V" --notes-file notes.md $PRE

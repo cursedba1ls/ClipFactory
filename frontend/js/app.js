@@ -1,6 +1,7 @@
 // Hash router. Each page exports render(root, params) and may return a cleanup function.
 import { api } from "./api.js";
 import { toast, toastError } from "./ui.js";
+import { initDesktop } from "./desktop.js";
 import * as dashboard from "./pages/dashboard.js";
 import * as newProject from "./pages/new-project.js";
 import * as projects from "./pages/projects.js";
@@ -41,6 +42,7 @@ async function route() {
 
 window.addEventListener("hashchange", route);
 route();
+initDesktop();
 
 // Publication reminders (badge in the sidebar + one-time toast per episode).
 const notified = new Set();

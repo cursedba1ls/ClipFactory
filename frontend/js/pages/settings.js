@@ -1,6 +1,8 @@
 import { api } from "../api.js";
 import { settingsForm } from "../settings-form.js";
-import { $, copyText, esc, icon, toast, toastError } from "../ui.js";
+import { $, copyText, esc, fmtDate, fmtSize, icon, toast, toastError } from "../ui.js";
+import { debounce } from "../drafts.js";
+import { desktop, installUpdate, openFolder, pollUpdates } from "../desktop.js";
 
 export async function render(root) {
   const [resp, sys, tiktok] = await Promise.all([
@@ -10,8 +12,13 @@ export async function render(root) {
   const meta = resp.meta;
 
   root.innerHTML = `
-    <div class="page-head"><div><h1>Настройки</h1><div class="sub">Параметры по умолчанию, распознавание речи, рендер и публикация</div></div>
-      <div class="spacer"></div><button class="btn primary" id="save">${icon.check}Сохранить настройки</button></div>
+    <div class="page-head"><div><h1>Настройки</h1><div class="sub">Параметры по умолчанию, распознавание речи, рендер, обновления и данные</div></div>
+      <div class="spacer"></div><span class="save-state small muted" id="save-state">${icon.check} Изменения сохраняются автоматически</span></div>
+    <div class="grid grid-2">
+      <div class="card" id="updates"></div>
+      <div class="card" id="data"></div>
+    </div>
+    <div class="mt"></div>
     <div class="card"><div class="card-head"><h2>Параметры новых проектов по умолчанию</h2></div><div id="defaults"></div></div>
     <div class="grid grid-2 mt">
       <div class="card"><div class="card-head"><h2>Распознавание речи</h2></div>
@@ -40,6 +47,7 @@ export async function render(root) {
             <label class="field"><span>Лимит файла с ПК, МБ</span><input type="number" id="max_upload_mb" min="10" value="${s.max_upload_mb}"></label>
           </div>
           <label class="switch"><input type="checkbox" id="force_normalize" ${s.force_normalize ? "checked" : ""}><span class="track"></span><span class="small">Всегда выравнивать частоту кадров исходника (медленнее, для проблемных файлов)</span></label>
+          <label class="switch"><input type="checkbox" id="keep_temp_files" ${s.keep_temp_files ? "checked" : ""}><span class="track"></span><span class="small">Сохранять временные файлы (для диагностики)</span></label>
         </div></div>
     </div>
     <div class="card mt"><div class="card-head"><h2>Подписи</h2></div>
@@ -51,12 +59,13 @@ export async function render(root) {
   const form = settingsForm(s.defaults, { showCaption: false, showAdvanced: true });
   $("#defaults", root).appendChild(form.el);
 
-  $("#save", root).onclick = async () => {
-    const err = form.validate();
-    if (err) return toastError(new Error(err));
-    const body = {
-      ...s,
-      defaults: { ...s.defaults, ...form.getValue() },
+  // ---- automatic saving: every change is written a moment after it is made
+  const stateEl = $("#save-state", root);
+  let current = s;
+  function collect() {
+    return {
+      ...current,
+      defaults: { ...current.defaults, ...form.getValue() },
       whisper_model: $("#whisper_model", root).value,
       whisper_device: $("#whisper_device", root).value,
       encoder: $("#encoder", root).value,
@@ -64,10 +73,95 @@ export async function render(root) {
       max_download_mb: Number($("#max_download_mb", root).value),
       max_upload_mb: Number($("#max_upload_mb", root).value),
       force_normalize: $("#force_normalize", root).checked,
+      keep_temp_files: $("#keep_temp_files", root).checked,
       default_hashtags: $("#default_hashtags", root).value,
+      update_check: $("#update_check", root)?.checked ?? current.update_check,
+      update_auto_download: $("#update_auto_download", root)?.checked ?? current.update_auto_download,
     };
-    try { await api.put("/api/settings", body); toast("Настройки сохранены", "ok"); } catch (e) { toastError(e); }
+  }
+  async function save() {
+    const err = form.validate();
+    if (err) { stateEl.innerHTML = `<span class="text-err">${esc(err)}</span>`; return; }
+    stateEl.innerHTML = `<span class="spinner sm"></span> Сохранение…`;
+    try {
+      current = (await api.put("/api/settings", collect())).settings;
+      stateEl.innerHTML = `${icon.check} Сохранено`;
+    } catch (e) {
+      stateEl.innerHTML = `<span class="text-err">${icon.alert} Не сохранено</span>`;
+      toastError(e);
+    }
+  }
+  const scheduleSave = debounce(save, 600);
+  const onEdit = (e) => {
+    if (e.target.closest("#tiktok") || e.target.closest("#data") || e.target.type === "file") return;
+    if (!e.target.closest("#updates") || e.target.matches("#update_check, #update_auto_download")) scheduleSave();
   };
+  root.addEventListener("input", onEdit);
+  root.addEventListener("change", onEdit);
+  form.el.addEventListener("change-settings", () => scheduleSave());
+  window.addEventListener("pagehide", scheduleSave.flush);
+
+  // ---- updates
+  async function drawUpdates(st) {
+    const box = $("#updates", root);
+    if (!box) return;
+    st = st || await api.get("/api/update").catch(() => null);
+    if (!st) { box.innerHTML = `<div class="muted">Нет данных об обновлениях</div>`; return; }
+    const stateText = {
+      idle: st.last_check ? "Установлена последняя версия" : "Проверка ещё не выполнялась",
+      checking: "Проверка…", available: `Доступна версия ${esc(st.available?.version || "")}`,
+      downloading: `Загрузка ${Math.round(st.progress * 100)}%`, ready: `Версия ${esc(st.available?.version || "")} готова к установке`,
+      installing: "Установка…", error: esc(st.error || "Ошибка"),
+    }[st.state] || st.state;
+    box.innerHTML = `<div class="card-head"><h2>Обновления</h2><div class="spacer"></div>
+        <span class="badge ${st.state === "error" ? "err" : st.state === "ready" || st.state === "available" ? "warn" : "ok"}">${stateText}</span></div>
+      <dl class="kv"><dt>Установленная версия</dt><dd><b>${esc(st.current_version)}</b>${st.channel && st.channel !== "stable" ? ` <span class="badge plain">${esc(st.channel)}</span>` : ""}</dd>
+        <dt>Последняя проверка</dt><dd>${st.last_check ? fmtDate(st.last_check) : "—"}</dd></dl>
+      ${st.installed_build ? `
+      <div class="stack mt-s">
+        <label class="switch"><input type="checkbox" id="update_check" ${current.update_check ? "checked" : ""}><span class="track"></span><span class="small">Проверять обновления автоматически</span></label>
+        <label class="switch"><input type="checkbox" id="update_auto_download" ${current.update_auto_download ? "checked" : ""}><span class="track"></span><span class="small">Скачивать их в фоне (установка — только по вашей кнопке)</span></label>
+      </div>
+      <div class="row mt">
+        <button class="btn" id="upd-check" ${st.state === "checking" || st.state === "downloading" ? "disabled" : ""}>${icon.refresh}Проверить обновления</button>
+        ${st.state === "available" ? `<button class="btn primary" id="upd-dl">${icon.download}Скачать ${esc(st.available.version)}</button>` : ""}
+        ${st.state === "ready" ? `<button class="btn primary" id="upd-install">${icon.refresh}Перезапустить и обновить</button>` : ""}
+      </div>
+      <div class="small faint mt-s">Обновления скачиваются с GitHub, проверяются по цифровой подписи и контрольной сумме. Проекты, видео и настройки при обновлении сохраняются.</div>`
+      : `<div class="small faint mt-s">ClipFactory запущен из исходного кода — обновления устанавливаются только в установленной программе.</div>`}`;
+    $("#upd-check", box)?.addEventListener("click", async () => {
+      $("#upd-check", box).disabled = true;
+      try { const r = await api.post("/api/update/check"); drawUpdates(r); pollUpdates(); if (r.state === "idle") toast("Установлена последняя версия", "ok"); } catch (e) { toastError(e); drawUpdates(); }
+    });
+    $("#upd-dl", box)?.addEventListener("click", async () => {
+      try { drawUpdates(await api.post("/api/update/download")); pollUpdates(); } catch (e) { toastError(e); }
+    });
+    $("#upd-install", box)?.addEventListener("click", () => installUpdate(st));
+    if (st.state === "downloading" || st.state === "checking") setTimeout(() => $("#updates", root) && drawUpdates(), 1500);
+  }
+  drawUpdates();
+
+  // ---- data and backups
+  async function drawData() {
+    const box = $("#data", root);
+    const b = await api.get("/api/backups").catch(() => ({ backups: [] }));
+    const reason = (r) => r === "daily" ? "ежедневная" : r.startsWith("update") ? "перед обновлением" : r.startsWith("before-schema") ? "перед обновлением базы" : r === "manual" ? "вручную" : r;
+    box.innerHTML = `<div class="card-head"><h2>Данные и резервные копии</h2></div>
+      <div class="small muted">Проекты, видео, черновики и настройки хранятся отдельно от программы и не удаляются при обновлении.</div>
+      <div class="input-row mt-s"><input type="text" readonly value="${esc(sys?.storage_path || desktop.data_dir || "")}">
+        ${desktop.desktop ? `<button class="btn" id="open-data">Открыть папку</button>` : ""}</div>
+      <div class="row mt" style="justify-content:space-between"><b class="small">Резервные копии базы (${b.backups.length})</b>
+        <div class="row"><button class="btn sm" id="mk-backup">Создать копию сейчас</button>
+        ${desktop.desktop ? `<button class="btn sm ghost" id="open-backups">Папка копий</button><button class="btn sm ghost" id="open-logs">Журнал</button>` : ""}</div></div>
+      <div class="backup-list">${b.backups.slice(0, 6).map((x) => `<div class="row small"><span class="grow">${fmtDate(x.created_at)} · ${esc(reason(x.reason))}</span><span class="muted">${fmtSize(x.size)}</span></div>`).join("") || `<div class="small faint">Копий пока нет — первая создаётся автоматически при запуске.</div>`}</div>`;
+    $("#open-data", box)?.addEventListener("click", () => openFolder("data"));
+    $("#open-backups", box)?.addEventListener("click", () => openFolder("backups"));
+    $("#open-logs", box)?.addEventListener("click", () => openFolder("logs"));
+    $("#mk-backup", box).onclick = async () => {
+      try { await api.post("/api/backups"); toast("Резервная копия создана", "ok"); drawData(); } catch (e) { toastError(e); }
+    };
+  }
+  drawData();
 
   function drawTikTok(t) {
     const box = $("#tiktok", root);
@@ -114,7 +208,11 @@ export async function render(root) {
       <dt>Субтитры (libass)</dt><dd>${sys.ffmpeg.libass ? '<span class="badge ok">доступны</span>' : '<span class="badge err">нет</span>'}</dd>
       <dt>Распознавание речи</dt><dd>${sys.whisper_installed ? '<span class="badge ok">faster-whisper установлен</span>' : '<span class="badge err">не установлен</span>'}</dd>
       <dt>Аппаратное кодирование</dt><dd>${sys.hardware_encoders.length ? esc(sys.hardware_encoders.map((k) => meta.encoders[k]).join(", ")) : "не найдено — используется процессор"}</dd>
-      <dt>Папка данных</dt><dd><code>${esc(sys.storage_path)}</code></dd>
       <dt>Свободно на диске</dt><dd>${String(sys.disk_free_gb).replace(".", ",")} ГБ</dd>
     </dl>` : `<div class="muted">Нет данных</div>`;
+
+  return () => {
+    scheduleSave.flush();
+    window.removeEventListener("pagehide", scheduleSave.flush);
+  };
 }

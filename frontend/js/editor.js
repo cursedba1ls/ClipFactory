@@ -2,7 +2,7 @@
 import { api } from "./api.js";
 import { cropEditor, screenRegions, splitY } from "./crop-editor.js";
 import { LAYOUTS } from "./settings-form.js";
-import { clearDraft, debounce, draftTime, loadDraft, saveDraft } from "./drafts.js";
+import { clearDraft, debounce, draftTime, loadDraft, onDraftStatus, saveDraft } from "./drafts.js";
 import { PRESETS } from "./settings-form.js";
 import { $, $$, esc, fmtDuration, icon, modal, toast, toastError } from "./ui.js";
 
@@ -61,9 +61,14 @@ export async function openEditor(episodeId, onSaved) {
 
   const m = modal({
     title: `Редактирование: часть ${ep.number}/${ep.total}`, body, wide: true,
-    footer: `<button class="btn ghost" data-reset>Сбросить к настройкам проекта</button><div style="flex:1"></div>
+    footer: `<button class="btn ghost" data-reset>Сбросить к настройкам проекта</button>
+      <span class="small muted draft-state" data-draft-state></span><div style="flex:1"></div>
       <button class="btn" data-save>Сохранить</button><button class="btn primary" data-save-render>${icon.refresh}Сохранить и пересоздать</button>`,
     onClose: () => {
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pagehide", flushDraft);
+      offDraft();
+      scheduleDraft.flush();
       if (!saved && serialize() !== baseline) {
         toast("Несохранённые правки остались черновиком — откройте часть снова, и они появятся", "ok", 6000);
       }
@@ -72,49 +77,169 @@ export async function openEditor(episodeId, onSaved) {
   const player = $("[data-player]", body);
 
   // ---------- subtitles ----------
+  // Undo/redo: snapshots of the cue list. Typing in one field is one step (grouped by a pause).
+  const undo = [], redo = [];
+  let lastSnap = 0;
+  function snapshot(group = false) {
+    const now = Date.now();
+    if (group && now - lastSnap < 1200) { lastSnap = now; return; }
+    lastSnap = now;
+    undo.push(JSON.stringify(cues));
+    if (undo.length > 200) undo.shift();
+    redo.length = 0;
+  }
+  function restore(from, to) {
+    if (!from.length) return;
+    to.push(JSON.stringify(cues));
+    cues = JSON.parse(from.pop());
+    touched.cues = true;
+    drawCues();
+    scheduleDraft();
+  }
+  const sortCues = () => cues.sort((a, b) => a.start - b.start);
+  const clampT = (t) => Math.max(0, Math.min(Number(ep.duration), Number(num(t))));
+  const nowT = () => (player ? player.currentTime : 0);
+
+  function problems(i) {
+    const c = cues[i], next = cues[i + 1];
+    if (!(c.end > c.start)) return "Конец раньше начала";
+    if (c.end > ep.duration + 0.01) return "Конец за пределами части";
+    if (next && next.start < c.end - 0.01) return "Пересекается со следующей фразой";
+    if (!String(c.text || "").trim()) return "Пустой текст";
+    return "";
+  }
+
+  function timelineHtml() {
+    const d = Number(ep.duration) || 1;
+    return `<div class="cue-timeline" data-tl title="Нажмите, чтобы перейти к этому месту">
+      ${cues.map((c, i) => `<div class="blk" data-ti="${i}" style="left:${(c.start / d) * 100}%;width:${Math.max(0.4, ((c.end - c.start) / d) * 100)}%"></div>`).join("")}
+      <div class="ph" data-ph></div></div>`;
+  }
+
   function drawCues() {
     const pane = $('[data-pane="subs"]', body);
     pane.innerHTML = `
       ${ep.subtitle_status === "disabled" ? `<div class="alert warn small" style="margin-bottom:10px">${icon.info}<div>Субтитры выключены в настройках проекта.</div></div>` : ""}
-      <div class="small muted" style="margin-bottom:10px">Время — в секундах от начала части (0–${num(ep.duration, 1)}). Нажмите ▶, чтобы перейти к фразе в плеере.</div>
-      <div class="cue cue-head"><span>Начало</span><span>Конец</span><span>Текст</span><span></span><span></span></div>
-      <div class="cues">${cues.map((c, i) => `
-        <div class="cue" data-i="${i}">
-          <input class="t" type="number" step="0.05" min="0" max="${ep.duration}" data-f="start" value="${num(c.start)}">
-          <input class="t" type="number" step="0.05" min="0" max="${ep.duration}" data-f="end" value="${num(c.end)}">
+      <div class="cue-toolbar">
+        <button class="btn sm" data-add title="Добавить фразу в текущем месте плеера">${icon.plus}Фраза</button>
+        <button class="btn sm" data-shift="-0.1" title="Сдвинуть все фразы раньше">−0,1 с</button>
+        <button class="btn sm" data-shift="0.1" title="Сдвинуть все фразы позже">+0,1 с</button>
+        <div class="spacer"></div>
+        <button class="btn sm icon" data-undo title="Отменить (Ctrl+Z)" ${undo.length ? "" : "disabled"}>↶</button>
+        <button class="btn sm icon" data-redo title="Повторить (Ctrl+Y)" ${redo.length ? "" : "disabled"}>↷</button>
+      </div>
+      ${timelineHtml()}
+      <div class="small muted" style="margin:8px 0">Время — секунды от начала части (0–${num(ep.duration, 1)}).
+        <span class="kbd-hint">Пробел — пуск/пауза · Ctrl+Z — отменить · Ctrl+S — сохранить</span></div>
+      <div class="cue cue-head"><span>Начало</span><span>Конец</span><span>Текст</span><span></span></div>
+      <div class="cues">${cues.map((c, i) => {
+        const pr = problems(i);
+        return `<div class="cue ${pr ? "bad" : ""}" data-i="${i}" ${pr ? `title="${esc(pr)}"` : ""}>
+          <div class="tcell"><input class="t" type="number" step="0.05" min="0" max="${ep.duration}" data-f="start" value="${num(c.start)}">
+            <button class="mini" data-set="start" title="Начало = текущее место плеера">⇤</button></div>
+          <div class="tcell"><input class="t" type="number" step="0.05" min="0" max="${ep.duration}" data-f="end" value="${num(c.end)}">
+            <button class="mini" data-set="end" title="Конец = текущее место плеера">⇥</button></div>
           <input type="text" maxlength="300" data-f="text" value="${esc(c.text)}">
-          <button class="btn sm icon" data-seek title="Перейти">${icon.play}</button>
-          <button class="btn sm icon danger" data-del title="Удалить">${icon.trash}</button>
-        </div>`).join("") || `<div class="muted small">В этой части нет распознанной речи. Можно добавить фразы вручную.</div>`}</div>
-      <div class="row mt">
-        <button class="btn sm" data-add>${icon.plus}Добавить фразу</button>
-        <button class="btn sm" data-shift="-0.1">−0,1 с всем</button><button class="btn sm" data-shift="0.1">+0,1 с всем</button>
-      </div>`;
+          <div class="cue-actions">
+            <button class="btn sm icon" data-seek title="Воспроизвести фразу">${icon.play}</button>
+            <button class="btn sm icon" data-split title="Разрезать в текущем месте плеера">✂</button>
+            <button class="btn sm icon" data-merge title="Объединить со следующей" ${i < cues.length - 1 ? "" : "disabled"}>⤓</button>
+            <button class="btn sm icon danger" data-del title="Удалить">${icon.trash}</button>
+          </div>
+        </div>`;
+      }).join("") || `<div class="muted small">В этой части нет распознанной речи. Добавьте фразы кнопкой «Фраза» — в текущем месте плеера.</div>`}</div>`;
     $$(".cue[data-i]", pane).forEach((row) => {
       const i = Number(row.dataset.i);
-      row.querySelectorAll("input").forEach((inp) => inp.oninput = () => {
-        touched.cues = true;
-        cues[i][inp.dataset.f] = inp.dataset.f === "text" ? inp.value : Number(inp.value);
+      row.querySelectorAll("input").forEach((inp) => {
+        inp.oninput = () => {
+          snapshot(true);
+          touched.cues = true;
+          cues[i][inp.dataset.f] = inp.dataset.f === "text" ? inp.value : Number(inp.value);
+          if (inp.dataset.f === "text") cues[i].words = [];
+          const pr = problems(i);
+          row.classList.toggle("bad", !!pr);
+          row.title = pr;
+        };
+        if (inp.dataset.f !== "text") inp.onchange = () => { sortCues(); drawCues(); };
+        inp.onfocus = () => { if (player && player.paused && inp.dataset.f !== "text") player.currentTime = cues[i].start; };
       });
-      row.querySelector("[data-seek]").onclick = () => { if (player) { player.currentTime = cues[i].start; player.play(); } };
-      row.querySelector("[data-del]").onclick = () => { touched.cues = true; cues.splice(i, 1); drawCues(); };
+      row.querySelectorAll("[data-set]").forEach((b) => b.onclick = () => {
+        snapshot(); touched.cues = true;
+        cues[i][b.dataset.set] = clampT(nowT());
+        sortCues(); drawCues();
+      });
+      row.querySelector("[data-seek]").onclick = () => {
+        if (!player) return;
+        player.currentTime = cues[i].start;
+        player.play();
+        const stopAt = cues[i].end;
+        const stop = () => { if (player.currentTime >= stopAt) { player.pause(); player.removeEventListener("timeupdate", stop); } };
+        player.addEventListener("timeupdate", stop);
+      };
+      row.querySelector("[data-split]").onclick = () => {
+        const c = cues[i], t = clampT(nowT());
+        if (!(t > c.start + 0.1 && t < c.end - 0.1)) return toast("Поставьте плеер внутрь фразы — она разрежется в этом месте", "warn");
+        snapshot(); touched.cues = true;
+        const words = String(c.text).split(/\s+/);
+        const k = Math.max(1, Math.min(words.length - 1, Math.round(words.length * (t - c.start) / (c.end - c.start))));
+        cues.splice(i, 1, { start: c.start, end: t, text: words.slice(0, k).join(" ") || c.text, words: [] },
+          { start: t, end: c.end, text: words.slice(k).join(" ") || "…", words: [] });
+        drawCues();
+      };
+      row.querySelector("[data-merge]").onclick = () => {
+        const c = cues[i], n = cues[i + 1];
+        if (!n) return;
+        snapshot(); touched.cues = true;
+        cues.splice(i, 2, { start: c.start, end: Math.max(c.end, n.end), text: `${c.text} ${n.text}`.trim(),
+          words: [...(c.words || []), ...(n.words || [])] });
+        drawCues();
+      };
+      row.querySelector("[data-del]").onclick = () => { snapshot(); touched.cues = true; cues.splice(i, 1); drawCues(); };
     });
     $("[data-add]", pane).onclick = () => {
-      touched.cues = true;
+      snapshot(); touched.cues = true;
       const last = cues[cues.length - 1];
-      const start = player && !player.paused ? player.currentTime : (last ? Math.min(ep.duration - 0.5, last.end + 0.1) : 0);
-      cues.push({ start: Number(num(start)), end: Number(num(Math.min(ep.duration, start + 1.5))), text: "Новая фраза", words: [] });
-      cues.sort((a, b) => a.start - b.start);
+      const start = player ? clampT(nowT()) : (last ? Math.min(ep.duration - 0.5, last.end + 0.1) : 0);
+      cues.push({ start, end: clampT(Math.min(ep.duration, start + 1.5)), text: "Новая фраза", words: [] });
+      sortCues();
       drawCues();
+      const idx = cues.findIndex((c) => c.start === start);
+      const inp = $(`.cue[data-i="${idx}"] input[data-f="text"]`, pane);
+      if (inp) { inp.focus(); inp.select(); }
     };
     $$("[data-shift]", pane).forEach((b) => b.onclick = () => {
-      touched.cues = true;
+      snapshot(); touched.cues = true;
       const d = Number(b.dataset.shift);
       cues = cues.map((c) => ({ ...c, start: Math.max(0, c.start + d), end: Math.max(0.05, c.end + d),
         words: (c.words || []).map((w) => ({ ...w, start: Math.max(0, w.start + d), end: Math.max(0, w.end + d) })) }));
       drawCues();
     });
+    $("[data-undo]", pane).onclick = () => restore(undo, redo);
+    $("[data-redo]", pane).onclick = () => restore(redo, undo);
+    const tl = $("[data-tl]", pane);
+    tl.onclick = (e) => {
+      if (!player) return;
+      const r = tl.getBoundingClientRect();
+      player.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * ep.duration;
+    };
+    syncPlayhead();
   }
+
+  // Playhead + the line being spoken right now.
+  function syncPlayhead() {
+    if (!player) return;
+    const t = player.currentTime, d = Number(ep.duration) || 1;
+    const ph = $("[data-ph]", body);
+    if (ph) ph.style.left = `${Math.min(100, (t / d) * 100)}%`;
+    const active = cues.findIndex((c) => t >= c.start && t < c.end);
+    $$(".cue[data-i]", body).forEach((r) => r.classList.toggle("active", Number(r.dataset.i) === active));
+    $$("[data-ti]", body).forEach((b) => b.classList.toggle("active", Number(b.dataset.ti) === active));
+    if (active >= 0 && !player.paused) {
+      const row = $(`.cue[data-i="${active}"]`, body);
+      if (row && !row.contains(document.activeElement)) row.scrollIntoView({ block: "nearest" });
+    }
+  }
+  if (player) player.addEventListener("timeupdate", syncPlayhead);
 
   // ---------- style ----------
   function drawStyle() {
@@ -306,7 +431,31 @@ export async function openEditor(episodeId, onSaved) {
     if (state === baseline) clearDraft(draftKey);
     else saveDraft(draftKey, JSON.parse(state), baseline);
   };
-  const scheduleDraft = debounce(persistDraft);
+  const scheduleDraft = debounce(persistDraft, 500);
+  const flushDraft = () => scheduleDraft.flush();
+  window.addEventListener("pagehide", flushDraft);
+  const offDraft = onDraftStatus((d) => {
+    if (d.key !== draftKey) return;
+    const el = $("[data-draft-state]", m.el);
+    if (!el) return;
+    el.textContent = d.state === "saving" ? "Сохранение черновика…" : d.state === "saved"
+      ? `Черновик сохранён ${new Date(d.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}` : "Черновик не сохранён";
+  });
+
+  // Keyboard: Ctrl+S save, Ctrl+Enter save and re-render, Ctrl+Z / Ctrl+Y undo/redo (outside text fields),
+  // Space play/pause (outside text fields).
+  function onKey(e) {
+    if (!m.el.isConnected) return;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target.type !== "range" && e.target.type !== "checkbox";
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); save(false); return; }
+    if (mod && e.key === "Enter") { e.preventDefault(); save(true); return; }
+    if (typing) return;
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "z") { e.preventDefault(); restore(undo, redo); return; }
+    if (mod && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) { e.preventDefault(); restore(redo, undo); return; }
+    if (e.key === " " && player) { e.preventDefault(); player.paused ? player.play() : player.pause(); }
+  }
+  document.addEventListener("keydown", onKey, true);
   for (const type of ["input", "change", "click", "pointerup"]) body.addEventListener(type, scheduleDraft);
 
   function applyDraft(s) {
@@ -326,7 +475,7 @@ export async function openEditor(episodeId, onSaved) {
     drawCues(); drawStyle(); drawCrop(); drawGame(); drawNum();
   }
 
-  const draft = loadDraft(draftKey);
+  const draft = await loadDraft(draftKey);
   if (draft && JSON.stringify(draft.state) !== baseline) {
     const stale = draft.base !== baseline;
     const banner = document.createElement("div");

@@ -6,7 +6,11 @@ import shutil
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from backend import build_info
+
+# Source checkout: the repository. Installed app: the bundled code/data directory (…\_internal).
+ROOT = build_info.BUNDLE_DIR
+INSTALL_DIR = build_info.INSTALL_DIR
 
 
 def _load_dotenv(path: Path) -> None:
@@ -24,15 +28,26 @@ def _load_dotenv(path: Path) -> None:
             os.environ[key] = value
 
 
-_load_dotenv(ROOT / ".env")
-
 APP_NAME = "ClipFactory"
-APP_VERSION = "1.0.0"
+APP_VERSION = build_info.version()
+
+
+def default_storage() -> Path:
+    """Installed app: per-user data folder that installs, updates and uninstalls never touch.
+    Source checkout: ./storage as before."""
+    if build_info.FROZEN:
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / APP_NAME
+    return ROOT / "storage"
+
+
+_load_dotenv(ROOT / ".env")
+_load_dotenv(default_storage() / ".env")
 
 HOST = os.environ.get("CLIPFACTORY_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLIPFACTORY_PORT", "8765"))
 
-STORAGE = Path(os.environ.get("CLIPFACTORY_STORAGE", str(ROOT / "storage"))).resolve()
+STORAGE = Path(os.environ.get("CLIPFACTORY_STORAGE", str(default_storage()))).resolve()
 FRONTEND_DIR = ROOT / "frontend"
 
 DIRS = {
@@ -46,6 +61,9 @@ DIRS = {
     "models": STORAGE / "models",
     "secrets": STORAGE / "secrets",
     "banners": STORAGE / "banners",
+    "backups": STORAGE / "backups",
+    "updates": STORAGE / "updates",
+    "webview": STORAGE / "webview",
 }
 
 DB_PATH = STORAGE / "clipfactory.db"
@@ -72,6 +90,7 @@ def find_binary(name: str) -> str | None:
     if os.environ.get(env_key):
         candidates.append(Path(os.environ[env_key]))
     exe = name + (".exe" if sys.platform == "win32" else "")
+    candidates.append(INSTALL_DIR / "ffmpeg" / exe)  # installed app: bundled FFmpeg
     candidates.append(ROOT / "tools" / "ffmpeg" / "bin" / exe)
     candidates.append(ROOT / "tools" / exe)
     for c in candidates:

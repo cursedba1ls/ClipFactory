@@ -103,6 +103,8 @@ class AppSettings(BaseModel):
     tiktok_client_key: str = Field(default="", max_length=200)
     tiktok_redirect_uri: str = Field(default="", max_length=500)
     keep_temp_files: bool = False
+    update_check: bool = True          # look for new versions (installed app)
+    update_auto_download: bool = True  # download them in the background; installing always asks first
 
 
 class MediaUrlIn(BaseModel):

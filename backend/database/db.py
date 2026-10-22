@@ -107,6 +107,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+
+-- Unsaved editing state (new-project form, episode editor), kept on disk so it survives restarts.
+CREATE TABLE IF NOT EXISTS drafts (
+    key TEXT PRIMARY KEY,
+    state TEXT NOT NULL,
+    base TEXT,
+    updated_at REAL NOT NULL
+);
 """
 
 JSON_FIELDS = {
@@ -155,18 +163,33 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the first release. Only ever append: an update must open every older database.
 MIGRATIONS = [("episodes", "auto_crop", "TEXT"), ("media", "trim_start", "REAL"), ("media", "trim_end", "REAL"),
               ("media", "fetch_start", "REAL"), ("media", "fetch_end", "REAL")]
+# PRAGMA user_version: bump together with MIGRATIONS / new tables.
+SCHEMA_VERSION = 3
+
+
+def schema_version() -> int:
+    return int(connect().execute("PRAGMA user_version").fetchone()[0])
 
 
 def init_db() -> None:
+    """Create or upgrade the database in place. Data is never dropped; a copy is taken before upgrading."""
     with _init_lock:
         conn = connect()
+        old = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        has_data = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0] > 0
+        if has_data and old < SCHEMA_VERSION:
+            from backend.services import backup  # local import: backup uses this module
+            backup.backup_database(f"before-schema-{SCHEMA_VERSION}")
         conn.executescript(SCHEMA)
-        for table, column, decl in MIGRATIONS:  # columns added after the first release
+        for table, column, decl in MIGRATIONS:
             cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
             if column not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        if old < SCHEMA_VERSION:
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 @contextmanager

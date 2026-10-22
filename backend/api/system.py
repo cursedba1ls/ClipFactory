@@ -100,3 +100,21 @@ def dashboard():
                           "project_title": p["title"] if p else "", "number": e["idx"] + 1,
                           "scheduled_at": e["scheduled_at"], "approved": bool(e["approved"])})
     return {"stats": stats, "recent_projects": recent, "active_jobs": active, "reminders": reminders}
+
+
+@router.get("/backups")
+def backups():
+    from backend.services import backup
+
+    return {"backups": backup.list_backups(), "path": str(config.DIRS["backups"])}
+
+
+@router.post("/backups")
+def create_backup():
+    from backend.errors import UserError
+    from backend.services import backup
+
+    p = backup.backup_database("manual")
+    if not p:
+        raise UserError("Не удалось создать резервную копию. Подробности — в журнале.")
+    return {"backups": backup.list_backups(), "created": p.name}

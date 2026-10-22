@@ -19,3 +19,5 @@ Thumbs.db
 examples/output/
 dist/
 packaging/launcher/ClipFactory.pdb
+
+build/

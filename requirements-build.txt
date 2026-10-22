@@ -1,0 +1,4 @@
+# Building the Windows installer (see RELEASING.md). Inno Setup 6 is installed separately.
+-r requirements.txt
+pyinstaller>=6.10
+pyinstaller-hooks-contrib>=2024.8

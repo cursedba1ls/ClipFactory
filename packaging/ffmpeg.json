@@ -1,0 +1,9 @@
+{
+  "comment": "FFmpeg bundled with the installer (gyan.dev essentials build: libass, x264, NVENC/QSV/AMF). Change url+sha256 together.",
+  "version": "7.1.1",
+  "urls": [
+    "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip",
+    "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-7.1.1-essentials_build.zip"
+  ],
+  "sha256": ""
+}

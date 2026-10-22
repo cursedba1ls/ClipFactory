@@ -48,12 +48,13 @@ def setup_logging() -> None:
     fh.addFilter(_RedactFilter())
     fh._clipfactory = True  # type: ignore[attr-defined]
     root.addHandler(fh)
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
-    sh.setLevel(logging.WARNING)
-    sh.addFilter(_RedactFilter())
-    sh._clipfactory = True  # type: ignore[attr-defined]
-    root.addHandler(sh)
+    if sys.stdout is not None:  # the windowed desktop app has no console
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setFormatter(fmt)
+        sh.setLevel(logging.WARNING)
+        sh.addFilter(_RedactFilter())
+        sh._clipfactory = True  # type: ignore[attr-defined]
+        root.addHandler(sh)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
@@ -68,14 +69,21 @@ async def lifespan(app: FastAPI):
     from backend.jobs.queue import manager
     from backend.jobs.scheduler import scheduler
 
+    from backend.services import backup, settings_store
+    from backend.services.updater import updater
+
     setup_logging()
     init_app_state()
+    backup.daily_backup_if_due()
+    updater.startup()
     manager.start()
     scheduler.start()
-    log.info("ClipFactory started on http://%s:%s", config.HOST, config.PORT)
+    updater.start_background(settings_store.get_settings)
+    log.info("ClipFactory %s started on http://%s:%s", config.APP_VERSION, config.HOST, config.PORT)
     try:
         yield
     finally:
+        updater.stop()
         scheduler.stop()
         manager.stop()
         log.info("ClipFactory stopped")
@@ -137,10 +145,10 @@ def create_app() -> FastAPI:
             parts.append(f"{loc}: {msg}" if loc else msg)
         return JSONResponse({"detail": "Некорректные данные — " + "; ".join(parts)}, status_code=422)
 
-    from backend.api import banners, episodes, jobs, media, projects, publish, system
+    from backend.api import banners, desktop_api, drafts, episodes, jobs, media, projects, publish, system, updates
 
     for r in (system.router, media.router, projects.router, episodes.router, jobs.router, publish.router,
-              banners.router):
+              banners.router, drafts.router, updates.router, desktop_api.router):
         app.include_router(r)
 
     @app.get("/api/health-check", include_in_schema=False)
@@ -184,7 +192,7 @@ def run() -> None:
     import uvicorn
 
     # Windows consoles default to cp1252: print Cyrillic messages safely everywhere.
-    if hasattr(sys.stdout, "reconfigure"):
+    if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     setup_logging()

@@ -17,7 +17,7 @@ async function request(method, url, body) {
   try {
     resp = await fetch(url, opts);
   } catch (e) {
-    throw new ApiError("Нет связи с ClipFactory. Проверьте, что окно программы (start.bat) не закрыто.", 0);
+    throw new ApiError("Нет связи с ClipFactory. Перезапустите программу, если это повторяется.", 0);
   }
   let data = null;
   const text = await resp.text();
