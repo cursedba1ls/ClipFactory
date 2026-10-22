@@ -126,7 +126,7 @@ def download_url(
     try:
         import yt_dlp
     except ImportError as exc:
-        raise UserError("Модуль yt-dlp не установлен. Запустите setup.bat ещё раз.") from exc
+        raise UserError("Модуль yt-dlp не установлен. Переустановите ClipFactory (данные сохранятся).") from exc
     dest_dir.mkdir(parents=True, exist_ok=True)
     max_bytes = max_mb * 1024 * 1024
 
@@ -232,7 +232,7 @@ def search_videos(query: str, limit: int = 12, creative_commons: bool = True,
     try:
         import yt_dlp
     except ImportError as exc:
-        raise UserError("Модуль yt-dlp не установлен. Запустите setup.bat ещё раз.") from exc
+        raise UserError("Модуль yt-dlp не установлен. Переустановите ClipFactory (данные сохранятся).") from exc
     limit = max(1, min(40, int(limit)))
     if creative_commons:
         url = f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp={CC_FILTER}"

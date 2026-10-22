@@ -53,12 +53,12 @@ export async function render(root) {
       const msgs = [];
       if (!s.ffmpeg.ffmpeg || !s.ffmpeg.ffprobe) {
         msgs.push(`<div class="alert err" style="margin-bottom:16px">${icon.alert}<div class="grow"><b>FFmpeg не найден.</b>
-          Без него обработка видео невозможна. Запустите <code>setup.bat</code> повторно или установите FFmpeg (см. README).</div></div>`);
+          Без него обработка видео невозможна. Переустановите ClipFactory поверх текущей версии — проекты и настройки сохранятся.</div></div>`);
       } else if (!s.ffmpeg.libass) {
         msgs.push(`<div class="alert warn" style="margin-bottom:16px">${icon.alert}<div class="grow">Ваша сборка FFmpeg без libass — субтитры не смогут быть вшиты в видео. Установите полную сборку FFmpeg (см. README).</div></div>`);
       }
       if (!s.whisper_installed) {
-        msgs.push(`<div class="alert warn" style="margin-bottom:16px">${icon.alert}<div class="grow">Модуль распознавания речи не установлен. Запустите <code>setup.bat</code> ещё раз.</div></div>`);
+        msgs.push(`<div class="alert warn" style="margin-bottom:16px">${icon.alert}<div class="grow">Модуль распознавания речи не найден. Переустановите ClipFactory поверх текущей версии — данные сохранятся.</div></div>`);
       }
       box.innerHTML = msgs.join("");
     } catch { /* ignore */ }

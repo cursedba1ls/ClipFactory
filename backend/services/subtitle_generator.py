@@ -278,7 +278,7 @@ def transcribe(
     part by part: after the GPU→CPU / VAD-off fallbacks it is reported right away with details.
     """
     if not whisper_available():
-        raise UserError("Модуль распознавания речи faster-whisper не установлен. Запустите setup.bat ещё раз.")
+        raise UserError("Модуль распознавания речи faster-whisper не установлен. Переустановите ClipFactory (данные сохранятся).")
     audio = load_audio(audio_path)
     if not len(audio):
         raise UserError("Ошибка распознавания речи.", detail="Звуковая дорожка пустая.")
