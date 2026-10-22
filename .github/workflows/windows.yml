@@ -2,14 +2,19 @@ name: Windows
 
 # Every push: the test suite on Windows, then the real installer is built, installed, launched, updated
 # and uninstalled on a clean Windows machine (packaging/tests/e2e_installed.py).
-# A tag vX.Y.Z (equal to backend/version.py) additionally publishes the GitHub Release that installed
-# copies update from. See RELEASING.md.
+# A tag vX.Y.Z (equal to backend/version.py), or a manual run with "release" checked, additionally
+# publishes the GitHub Release that installed copies update from. See RELEASING.md.
 
 on:
   push:
     branches: [main, claude/clipfactory-app]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish the GitHub Release for backend/version.py (creates the tag vX.Y.Z on this commit)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -104,7 +109,7 @@ jobs:
           path: build/e2e-logs
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
     needs: [tests, installer]
     runs-on: ubuntu-latest
     permissions:
@@ -118,11 +123,17 @@ jobs:
         with:
           name: ClipFactory-installer
           path: dist
-      - name: Tag must match backend/version.py
+      - name: Version (a tag must match backend/version.py; a manual release must not reuse a version)
         id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           V=$(python -c "from backend.version import VERSION; print(VERSION)")
-          test "v$V" = "${GITHUB_REF_NAME}" || { echo "::error::tag ${GITHUB_REF_NAME} != version $V"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            test "v$V" = "${GITHUB_REF_NAME}" || { echo "::error::tag ${GITHUB_REF_NAME} != version $V"; exit 1; }
+          elif gh release view "v$V" >/dev/null 2>&1; then
+            echo "::error::Release v$V already exists: bump backend/version.py first"; exit 1
+          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
       - name: Sign the update manifest
         env:
@@ -143,4 +154,4 @@ jobs:
           PRE=""; case "$V" in *-*) PRE="--prerelease";; esac
           FILES="dist/ClipFactory-Setup-$V.exe dist/ClipFactory-Setup-$V.exe.sha256"
           [ -f dist/latest.json ] && FILES="$FILES dist/latest.json"
-          gh release create "v$V" $FILES --title "ClipFactory $V" --notes-file notes.md $PRE
+          gh release create "v$V" $FILES --title "ClipFactory $V" --notes-file notes.md --target "$GITHUB_SHA" $PRE
