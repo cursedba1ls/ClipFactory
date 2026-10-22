@@ -349,7 +349,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .cue-timeline .blk.active { background: var(--accent); }
 .cue-timeline .ph { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 4px #000; pointer-events: none; }
 .kbd-hint { opacity: .7; margin-left: 6px; }
-.draft-state { margin-left: 10px; }
+.draft-state { margin-left: 10px; align-self: center; }
 .cue input { height: 34px; font-size: 13px; }
 .cue input.t { font-variant-numeric: tabular-nums; padding: 0 8px; }
 .cue-head { color: var(--text-3); font-size: 12px; }

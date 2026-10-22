@@ -71,10 +71,11 @@ class SingleInstance:
         if sys.platform == "win32":
             import ctypes
 
-            kernel32 = ctypes.windll.kernel32
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             kernel32.CreateMutexW.restype = ctypes.c_void_p
+            kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
             self.handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
-            self.already_running = kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+            self.already_running = ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
             return not self.already_running
         return True
 
@@ -82,7 +83,9 @@ class SingleInstance:
         if self.handle and sys.platform == "win32":
             import ctypes
 
-            ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(self.handle))
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel32.CloseHandle(self.handle)
             self.handle = None
 
 
@@ -265,8 +268,10 @@ class DesktopApp:
         w.events.maximized += on_maximized
         w.events.restored += on_restored
 
+        save_kind = getattr(getattr(webview, "FileDialog", None), "SAVE", None) or webview.SAVE_DIALOG
+
         def save_dialog(name: str):
-            res = w.create_file_dialog(webview.SAVE_DIALOG, save_filename=name)
+            res = w.create_file_dialog(save_kind, save_filename=name)
             if isinstance(res, (list, tuple)):
                 res = res[0] if res else None
             return res

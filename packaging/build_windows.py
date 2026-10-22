@@ -143,6 +143,22 @@ def run_pyinstaller() -> None:
                     str(PKG / "clipfactory.spec")], cwd=ROOT, env=env, check=True)
 
 
+VC_RUNTIME = ["msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "vcruntime140.dll", "vcruntime140_1.dll",
+              "vcomp140.dll", "concrt140.dll"]
+
+
+def bundle_vc_runtime(app_dir: Path) -> None:
+    """App-local Visual C++ runtime (allowed by Microsoft): speech recognition and other native modules
+    then work on PCs without the VC++ Redistributable installed."""
+    system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+    target = app_dir / "_internal"
+    for name in VC_RUNTIME:
+        src = system32 / name
+        if src.is_file() and not (target / name).exists():
+            shutil.copy2(src, target / name)
+            print(f"  bundled {name}", flush=True)
+
+
 def find_iscc() -> str:
     for c in [os.environ.get("ISCC"), shutil.which("ISCC"), shutil.which("iscc"),
               r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe", r"C:\Program Files\Inno Setup 6\ISCC.exe",
@@ -191,6 +207,7 @@ def main() -> None:
         ff = fetch_ffmpeg()
         run_pyinstaller()
         app_dir = APP_DIR
+        bundle_vc_runtime(app_dir)
         (app_dir / "ffmpeg").mkdir(exist_ok=True)
         for f in ff.iterdir():
             shutil.copy2(f, app_dir / "ffmpeg" / f.name)
