@@ -13,7 +13,7 @@ from pathlib import Path
 from backend import config
 from backend.database import db
 from backend.errors import Cancelled, UserError
-from backend.jobs.queue import JobContext, register
+from backend.jobs.queue import JobContext, manager, register
 from backend.services import (
     captions, downloader, encoders, ffmpeg_utils, gameplay_manager, publisher, renderer,
     settings_store, smart_crop, subtitle_generator, subtitle_import, video_analyzer, video_splitter,
@@ -523,7 +523,9 @@ def job_build_series(ctx: JobContext) -> None:
             raise UserError("Не все части созданы. " + " ".join(errors[:5]))
         ctx.update(stage="Готово", progress=100, message=f"Создано частей: {len(episodes)}", force=True)
     except Cancelled:
-        db.update("projects", pid, {"status": "cancelled", "updated_at": db.now()})
+        # Closing the app only pauses the work: the job is queued again and resumes on the next start.
+        db.update("projects", pid, {"status": "processing" if manager.shutting_down else "cancelled",
+                                    "updated_at": db.now()})
         raise
     except UserError as exc:
         db.update("projects", pid, {"status": "error", "error": exc.message, "updated_at": db.now()})
