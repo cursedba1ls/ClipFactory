@@ -100,6 +100,7 @@ class Updater:
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._checking = False
         self.installer_launcher: Callable[[Path], None] | None = None  # set by the desktop shell
 
     # ------------------------------------------------------------------ paths / persisted state
@@ -176,21 +177,36 @@ class Updater:
 
     def check(self) -> dict:
         with self.lock:
-            if self.state in ("checking", "downloading", "installing"):
+            if self.state in ("checking", "downloading", "installing") or self._checking:
                 return self.status()
-            self.state, self.error = "checking", None
+            self._checking = True
+            self.error = None
+            # A downloaded update stays "ready" (installable) while a background check runs.
+            if self.state != "ready":
+                self.state = "checking"
+        try:
+            return self._check()
+        finally:
+            with self.lock:
+                self._checking = False
+
+    def _check(self) -> dict:
         try:
             payload = self._fetch_manifest()
         except (UserError, ManifestError) as exc:
             with self.lock:
-                self.error = exc.message if isinstance(exc, UserError) else str(exc)
                 self.last_check = time.time()
+                if self.state == "installing":  # installation started meanwhile: leave it alone
+                    return self.status()
+                self.error = exc.message if isinstance(exc, UserError) else str(exc)
                 # A failed re-check never throws away an update that is already downloaded and verified.
                 self.state = "ready" if self._restore_downloaded() else "error"
             log.info("update check failed: %s", getattr(exc, "detail", None) or exc)
             return self.status()
         with self.lock:
             self.last_check = time.time()
+            if self.state == "installing":
+                return self.status()
             if payload and update_manifest.is_newer(payload["version"], config.APP_VERSION):
                 ready = self._downloaded_matches(payload)
                 self.available = payload
@@ -309,7 +325,10 @@ class Updater:
         from backend.services import backup
 
         with self.lock:
-            if self.state != "ready" or not self.available:
+            if self.state == "installing":
+                return self.status()
+            # The verified download is what counts, not a momentary state (e.g. a check in progress).
+            if self.state != "ready" and not self._restore_downloaded():
                 raise UserError("Обновление ещё не загружено.")
             if not build_info.is_installed_build() or self.installer_launcher is None:
                 raise UserError("Обновления устанавливаются только в установленной программе ClipFactory.")

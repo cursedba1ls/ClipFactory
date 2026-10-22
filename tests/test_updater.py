@@ -142,6 +142,34 @@ def test_downloaded_update_survives_a_failed_recheck(env):
     assert launched
 
 
+def test_install_while_a_background_check_runs(env, monkeypatch):
+    """Regression (found by the Windows end-to-end test): a periodic check that started right after the
+    download finished made "Restart and update" fail with "not downloaded yet"."""
+    u, publish, launched, srv = env
+    publish()
+    u.check()
+    u.download(wait=True)
+    assert u.state == "ready"
+    started, release = threading.Event(), threading.Event()
+    real_fetch = u._fetch_manifest
+
+    def slow_fetch():
+        started.set()
+        release.wait(5)
+        return real_fetch()
+
+    monkeypatch.setattr(u, "_fetch_manifest", slow_fetch)
+    t = threading.Thread(target=u.check)
+    t.start()
+    assert started.wait(5)
+    assert u.status()["state"] == "ready", "a running check must not hide the downloaded update"
+    u.install()
+    assert launched
+    release.set()
+    t.join(5)
+    assert u.state == "installing", "a check finishing during installation must not change the state"
+
+
 def test_no_update_when_same_or_older(env):
     u, publish, *_ = env
     publish(version="2.0.0")
