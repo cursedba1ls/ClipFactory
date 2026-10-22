@@ -3,9 +3,10 @@ import { openEditor } from "../editor.js";
 import { cropEditor, focusOf, sourceFromMedia } from "../crop-editor.js";
 import { settingsForm } from "../settings-form.js";
 import { desktop, openFolder } from "../desktop.js";
+import { celebrate } from "../motion.js";
 import {
   $, $$, badge, confirmDialog, EPISODE_STATUS, esc, fmtDuration, fmtSecondsShort, icon, jobPanel, mediaInfoHtml,
-  modal, plural, PROJECT_STATUS, SUB_STATUS, timelineHtml, toast, toastError,
+  modal, plural, PROJECT_STATUS, renderJobs, setHtml, SUB_STATUS, timelineHtml, toast, toastError,
 } from "../ui.js";
 
 export async function render(root, [projectId]) {
@@ -48,10 +49,10 @@ export async function render(root, [projectId]) {
   // ---------- rendering ----------
   function drawHead() {
     const c = project.counts;
-    $("#head-meta", root).innerHTML = `${badge(PROJECT_STATUS, project.status)}
+    setHtml($("#head-meta", root), `${badge(PROJECT_STATUS, project.status)}
       ${project.timeline ? `<span class="muted small">${fmtDuration(project.timeline.duration)} исходника</span>` : ""}
       ${c.total ? `<span class="muted small">· ${c.total} ${plural(c.total, "часть", "части", "частей")} по ${project.settings.episode_seconds} с</span>` : ""}
-      ${project.transcript_language ? `<span class="muted small">· ${project.transcript_language === "file" ? "субтитры из файла" : `речь: ${project.transcript_language === "ru" ? "русский" : project.transcript_language === "en" ? "английский" : esc(project.transcript_language)}`}</span>` : ""}`;
+      ${project.transcript_language ? `<span class="muted small">· ${project.transcript_language === "file" ? "субтитры из файла" : `речь: ${project.transcript_language === "ru" ? "русский" : project.transcript_language === "en" ? "английский" : esc(project.transcript_language)}`}</span>` : ""}`);
     const busy = project.active_jobs.length > 0;
     const b = $("#build", root);
     b.disabled = busy;
@@ -65,9 +66,9 @@ export async function render(root, [projectId]) {
   function drawJobs() {
     const jobs = project.active_jobs.length ? project.active_jobs
       : (project.last_job && ["failed", "cancelled"].includes(project.last_job.status) && project.status !== "ready" ? [project.last_job] : []);
-    $("#jobs", root).innerHTML = jobs.map((j) => jobPanel(j)).join("");
-    $("#warnings", root).innerHTML = project.warnings.map((w) =>
-      `<div class="alert warn mt">${icon.alert}<div class="grow">${esc(w)}</div></div>`).join("");
+    renderJobs($("#jobs", root), jobs);
+    setHtml($("#warnings", root), project.warnings.map((w) =>
+      `<div class="alert warn mt">${icon.alert}<div class="grow">${esc(w)}</div></div>`).join(""));
   }
 
   function drawInfo() {
@@ -84,8 +85,8 @@ export async function render(root, [projectId]) {
   function drawTimeline() {
     const eps = project.episodes;
     const total = project.timeline?.duration;
-    $("#timeline", root).innerHTML = eps.length && total ? timelineHtml(eps, total)
-      : `<div class="muted small">Границы частей появятся после анализа видео.</div>`;
+    setHtml($("#timeline", root), eps.length && total ? timelineHtml(eps, total)
+      : `<div class="muted small">Границы частей появятся после анализа видео.</div>`);
     $("#tl-hint", root).textContent = eps.length ? "Цвет: зелёный — готово, жёлтый — создаётся, синий — нужно пересоздать; полоса снизу — одобрено" : "";
     $$("[data-seg]", root).forEach((s) => s.onclick = () => {
       const card = document.getElementById(`ep-${s.dataset.seg}`);
@@ -166,8 +167,13 @@ export async function render(root, [projectId]) {
   drawAll();
 
   async function reload() {
+    const before = project.status;
     project = await api.get(`/api/projects/${projectId}`);
     drawHead(); drawJobs(); drawTimeline(); drawEpisodes();
+    if (before === "processing" && project.status === "ready" && root.isConnected) {
+      celebrate();
+      toast(`Серия готова: ${project.episodes.length} ${plural(project.episodes.length, "часть", "части", "частей")}`, "ok", 6000);
+    }
   }
 
   // ---------- actions ----------

@@ -1,5 +1,6 @@
 import { api } from "../api.js";
-import { badge, emptyState, esc, fmtDate, icon, jobPanel, PROJECT_STATUS, toastError, plural } from "../ui.js";
+import { countUp } from "../motion.js";
+import { badge, emptyState, esc, fmtDate, icon, jobPanel, PROJECT_STATUS, renderJobs, setHtml, toastError, plural } from "../ui.js";
 
 export function projectCard(p) {
   const c = p.counts;
@@ -33,16 +34,18 @@ export async function render(root) {
     root.querySelector("#stats").innerHTML = [
       ["Проектов", s.projects], ["Создано частей", s.episodes], ["Ожидают проверки", s.pending, true],
       ["Одобрено", s.approved], ["Опубликовано", s.published],
-    ].map(([l, v, a]) => `<div class="stat"><div class="label">${l}</div><div class="value ${a && v ? "accent" : ""}">${v}</div></div>`).join("");
-    root.querySelector("#reminders").innerHTML = d.reminders.length ? `<div class="alert warn" style="margin-bottom:16px">${icon.clock}
+    ].map(([l, v, a]) => `<div class="stat"><div class="label">${l}</div><div class="value ${a && v ? "accent" : ""}" data-count="${v}" data-key="${l}">${v}</div></div>`).join("");
+    root.querySelectorAll("#stats [data-count]").forEach((el) => countUp(el, el.dataset.count, el.dataset.key));
+    setHtml(root.querySelector("#reminders"), d.reminders.length ? `<div class="alert warn" style="margin-bottom:16px">${icon.clock}
       <div class="grow"><b>Пора публиковать</b>${d.reminders.map((r) =>
-        `<div><a href="#/publish">«${esc(r.project_title)}» — часть ${r.number}</a>${r.approved ? "" : " · ещё не одобрена"}</div>`).join("")}</div></div>` : "";
-    root.querySelector("#jobs").innerHTML = d.active_jobs.length
-      ? `<div class="card-head"><h2>Сейчас выполняется</h2></div>${d.active_jobs.map((j) => jobPanel(j)).join("")}` : "";
-    root.querySelector("#recent").innerHTML = d.recent_projects.length
+        `<div><a href="#/publish">«${esc(r.project_title)}» — часть ${r.number}</a>${r.approved ? "" : " · ещё не одобрена"}</div>`).join("")}</div></div>` : "");
+    const jobsBox = root.querySelector("#jobs");
+    setHtml(jobsBox, d.active_jobs.length ? `<div class="card-head"><h2>Сейчас выполняется</h2></div><div data-job-list></div>` : "");
+    renderJobs(jobsBox.querySelector("[data-job-list]"), d.active_jobs);
+    setHtml(root.querySelector("#recent"), d.recent_projects.length
       ? `<div class="projects">${d.recent_projects.map(projectCard).join("")}</div>`
       : emptyState("Пока нет проектов", "Добавьте мультфильм и геймплей — ClipFactory сам нарежет серию частей с субтитрами.",
-        `<a class="btn primary" href="#/new">${icon.plus}Создать первый проект</a>`);
+        `<a class="btn primary" href="#/new">${icon.plus}Создать первый проект</a>`));
     return d.active_jobs.length;
   }
 

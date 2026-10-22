@@ -2,6 +2,7 @@
 // the native "Save as" dialog and presents updates (found → downloaded → "restart and update").
 import { api } from "./api.js";
 import { $, esc, icon, modal, toast, toastError } from "./ui.js";
+import { celebrate } from "./motion.js";
 
 export let desktop = { desktop: false, version: "", can_save_dialog: false };
 
@@ -70,6 +71,7 @@ function showWhatsNew(info) {
     onClose: () => api.post("/api/update/dismiss").catch(() => {}),
   });
   m.el.querySelector("[data-ok]").onclick = () => m.close();
+  setTimeout(celebrate, 250);
 }
 
 function renderUpdateBar(st) {

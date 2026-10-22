@@ -2,6 +2,7 @@
 import { api } from "./api.js";
 import { toast, toastError } from "./ui.js";
 import { initDesktop } from "./desktop.js";
+import { animateIn, moveNavPill, skeleton } from "./motion.js";
 import * as dashboard from "./pages/dashboard.js";
 import * as newProject from "./pages/new-project.js";
 import * as projects from "./pages/projects.js";
@@ -23,6 +24,7 @@ const routes = [
 ];
 
 let cleanup = null;
+let routeToken = 0;
 const root = document.getElementById("app");
 
 async function route() {
@@ -32,11 +34,19 @@ async function route() {
   const match = routes.find(([re]) => re.test(path)) || routes[0];
   const params = path.match(match[0])?.slice(1) || [];
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === match[1]));
+  moveNavPill(document.getElementById("nav"));
+  const token = ++routeToken;
   root.innerHTML = "";
   window.scrollTo(0, 0);
+  // A page that takes a moment to load its data shows a skeleton instead of an empty screen.
+  const skel = setTimeout(() => { if (token === routeToken && !root.childElementCount) root.innerHTML = skeleton(); }, 120);
   try {
     cleanup = (await match[2].render(root, params)) || null;
+    clearTimeout(skel);
+    root.querySelector(":scope > .skeleton")?.remove();
+    if (token === routeToken) animateIn(root);
   } catch (e) {
+    clearTimeout(skel);
     toastError(e);
     root.innerHTML = `<div class="alert err">${e.message || e}</div>`;
   }

@@ -84,8 +84,18 @@ export function toast(message, type = "info", timeout = 4500) {
   const t = document.createElement("div");
   t.className = `toast ${type}`;
   t.textContent = message;
+  t.style.setProperty("--life", `${timeout}ms`);
+  t.title = "Нажмите, чтобы закрыть";
+  let gone = false;
+  const dismiss = () => {
+    if (gone) return;
+    gone = true;
+    t.classList.add("out");
+    setTimeout(() => t.remove(), 260);
+  };
+  t.addEventListener("click", dismiss);
   box.appendChild(t);
-  setTimeout(() => t.remove(), timeout);
+  setTimeout(dismiss, timeout);
 }
 
 export function toastError(e) {
@@ -104,10 +114,15 @@ export function modal({ title, body, footer = "", wide = false, onClose } = {}) 
     </div>`;
   const bodyEl = back.querySelector(".modal-body");
   if (typeof body === "string") bodyEl.innerHTML = body; else if (body) bodyEl.appendChild(body);
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     back.querySelectorAll("video").forEach((v) => v.pause());
-    back.remove();
     document.removeEventListener("keydown", onKey);
+    // Animate out, then remove; the closing modal no longer reacts to the mouse.
+    back.classList.add("closing");
+    setTimeout(() => back.remove(), 200);
     onClose && onClose();
   };
   const onKey = (e) => { if (e.key === "Escape") close(); };
@@ -183,6 +198,40 @@ export function badge(map, key, extra = "") {
   return `<span class="badge ${cls} ${extra}">${esc(label)}</span>`;
 }
 
+// ---------- flicker-free updates ----------
+// Replace an element's content only when it actually changed: periodic refreshes then keep playing videos,
+// focus, scroll and running animations intact.
+export function setHtml(el, html) {
+  if (!el) return false;
+  if (el._cfHtml === html) return false;
+  el.innerHTML = html;
+  el._cfHtml = html;
+  return true;
+}
+
+// Job panels: the same running jobs are updated in place (the bar glides, the spinner keeps turning).
+export function renderJobs(container, jobs, opts) {
+  if (!container) return;
+  const html = jobs.map((j) => jobPanel(j, opts)).join("");
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  const olds = [...container.children], news = [...tmp.children];
+  const same = olds.length === news.length && olds.length > 0
+    && olds.every((o, i) => o.dataset.job === news[i].dataset.job && o.className === news[i].className && o.classList.contains("job"));
+  if (!same) { container.innerHTML = html; container._cfHtml = undefined; return; }
+  olds.forEach((o, i) => {
+    const n = news[i];
+    const bar = o.querySelector(".progress > div"), nbar = n.querySelector(".progress > div");
+    if (bar && nbar) bar.style.width = nbar.style.width;
+    for (const sel of [".job-stage", ".job-pct"]) {
+      const a = o.querySelector(sel), b = n.querySelector(sel);
+      if (a && b && a.textContent !== b.textContent) a.textContent = b.textContent;
+    }
+    const m = o.querySelector(".job-meta"), nm = n.querySelector(".job-meta");
+    if (m && nm && m.innerHTML !== nm.innerHTML) m.innerHTML = nm.innerHTML;
+  });
+}
+
 // ---------- job panel ----------
 export function jobPanel(job, { showTitle = true } = {}) {
   if (!job) return "";
@@ -200,7 +249,7 @@ export function jobPanel(job, { showTitle = true } = {}) {
       <button class="btn sm" data-retry="${esc(job.id)}">${icon.refresh}Продолжить</button></div>`;
   }
   if (!running) return "";
-  return `<div class="job" data-job="${esc(job.id)}">
+  return `<div class="job ${esc(job.status)}" data-job="${esc(job.id)}">
     <div class="job-top">
       ${job.status === "queued" ? `<span class="badge">В очереди</span>` : `<div class="spinner" style="width:18px;height:18px;border-width:2.5px"></div>`}
       <span class="job-stage">${esc(job.stage || job.title)}</span>
