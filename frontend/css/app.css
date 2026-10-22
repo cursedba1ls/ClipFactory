@@ -468,3 +468,11 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .text-err { color: var(--err, #ff5d6c); display: inline-flex; align-items: center; gap: 6px; }
 .spinner.sm { width: 14px; height: 14px; border-width: 2px; }
 .backup-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+
+.help-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 12px; }
+.help-steps li::marker { color: var(--accent); font-weight: 700; }
+.help-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+kbd { font: 600 12px/1 ui-monospace, Consolas, monospace; padding: 3px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-2, #1c1e26); }
+
+.q-when { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.q-when input, .q-when select { width: 100%; min-width: 0; }

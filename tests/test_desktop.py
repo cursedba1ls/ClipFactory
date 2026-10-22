@@ -89,3 +89,9 @@ def test_save_dialog_only_in_window(client):
     assert r.status_code == 400
     r = client.post("/api/desktop/save", json={"url": "http://evil/x", "filename": "a.zip"})
     assert r.status_code == 422
+
+
+def test_static_files_are_revalidated(client):
+    r = client.get("/static/js/app.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    assert client.get("/").headers["cache-control"] == "no-cache"

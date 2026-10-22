@@ -130,7 +130,11 @@ def create_app() -> FastAPI:
                 o = urlsplit(origin)
                 if (o.hostname or "").lower() not in ("127.0.0.1", "localhost", "testserver", config.HOST.lower()):
                     return JSONResponse({"detail": "Запрос с другого сайта отклонён."}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            # Always revalidate: after an update the window must not run the previous version's scripts.
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.exception_handler(UserError)
     async def user_error(_: Request, exc: UserError):

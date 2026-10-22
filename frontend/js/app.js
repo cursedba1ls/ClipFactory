@@ -9,6 +9,7 @@ import * as project from "./pages/project.js";
 import * as gameplay from "./pages/gameplay.js";
 import * as publish from "./pages/publish.js";
 import * as settings from "./pages/settings.js";
+import * as help from "./pages/help.js";
 
 const routes = [
   [/^\/?$/, "dashboard", dashboard],
@@ -18,6 +19,7 @@ const routes = [
   [/^\/gameplay$/, "gameplay", gameplay],
   [/^\/publish$/, "publish", publish],
   [/^\/settings$/, "settings", settings],
+  [/^\/help$/, "help", help],
 ];
 
 let cleanup = null;

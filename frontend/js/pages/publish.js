@@ -95,9 +95,9 @@ export async function render(root) {
             <label class="field"><span>Подпись</span><textarea data-f="caption" maxlength="2200" rows="3">${esc(e.caption)}</textarea></label>
             <div class="stack" style="gap:10px">
               <label class="field"><span>Хештеги</span><input type="text" data-f="hashtags" maxlength="500" value="${esc(e.hashtags)}"></label>
-              <div class="row nowrap" style="gap:8px">
-                <label class="field" style="flex:1"><span>Дата и время публикации</span><input type="datetime-local" data-f="scheduled_at" value="${toLocalInput(e.scheduled_at)}"></label>
-                <label class="field" style="flex:1"><span>Способ</span><select data-f="publish_mode">
+              <div class="q-when">
+                <label class="field"><span>Дата и время публикации</span><input type="datetime-local" data-f="scheduled_at" value="${toLocalInput(e.scheduled_at)}"></label>
+                <label class="field"><span>Способ</span><select data-f="publish_mode">
                   <option value="manual" ${e.publish_mode === "manual" ? "selected" : ""}>Вручную</option>
                   <option value="api_direct" ${e.publish_mode === "api_direct" ? "selected" : ""} ${connected ? "" : "disabled"}>API: публикация</option>
                   <option value="api_inbox" ${e.publish_mode === "api_inbox" ? "selected" : ""} ${connected ? "" : "disabled"}>API: во «Входящие»</option>
