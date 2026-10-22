@@ -170,7 +170,7 @@ def find_iscc() -> str:
 
 def build_installer(app_dir: Path, version: str) -> Path:
     out = DIST
-    subprocess.run([find_iscc(), f"/DAppVersion={version}", f"/DAppVersionNumeric={numeric_version(version)}",
+    subprocess.run([find_iscc(), "/Qp", f"/DAppVersion={version}", f"/DAppVersionNumeric={numeric_version(version)}",
                     f"/DSourceDir={app_dir}", f"/DOutputDir={out}", f"/DIconFile={PKG / 'clipfactory.ico'}",
                     str(PKG / "installer.iss")], check=True)
     exe = out / f"ClipFactory-Setup-{version}.exe"
