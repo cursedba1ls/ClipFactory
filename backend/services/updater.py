@@ -183,9 +183,10 @@ class Updater:
             payload = self._fetch_manifest()
         except (UserError, ManifestError) as exc:
             with self.lock:
-                self.state = "error"
                 self.error = exc.message if isinstance(exc, UserError) else str(exc)
                 self.last_check = time.time()
+                # A failed re-check never throws away an update that is already downloaded and verified.
+                self.state = "ready" if self._restore_downloaded() else "error"
             log.info("update check failed: %s", getattr(exc, "detail", None) or exc)
             return self.status()
         with self.lock:
@@ -194,10 +195,24 @@ class Updater:
                 ready = self._downloaded_matches(payload)
                 self.available = payload
                 self.state = "ready" if ready else "available"
+            elif self._restore_downloaded():
+                self.state = "ready"
             else:
                 self.available = None
                 self.state = "idle"
         return self.status()
+
+    def _restore_downloaded(self) -> bool:
+        """Make a previously downloaded, still newer installer the available update again."""
+        dl = self._load().get("downloaded") or {}
+        try:
+            newer = update_manifest.is_newer(dl.get("version", "0.0.0"), config.APP_VERSION)
+        except ManifestError:
+            return False
+        if newer and Path(dl.get("path", "")).is_file() and dl.get("payload"):
+            self.available = dl["payload"]
+            return True
+        return False
 
     def _fetch_manifest(self) -> dict | None:
         url = manifest_url()

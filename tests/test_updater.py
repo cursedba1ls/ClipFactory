@@ -128,6 +128,20 @@ def test_failed_install_is_reported(env):
     assert u2.state == "ready", "the verified installer stays available for another try"
 
 
+def test_downloaded_update_survives_a_failed_recheck(env):
+    u, publish, launched, srv = env
+    publish()
+    u.check()
+    u.download(wait=True)
+    srv.files.pop("/latest.json")  # 404 now
+    assert u.check()["state"] == "ready"
+    srv.files["/latest.json"] = b"garbage"
+    st = u.check()
+    assert st["state"] == "ready" and st["error"]
+    u.install()
+    assert launched
+
+
 def test_no_update_when_same_or_older(env):
     u, publish, *_ = env
     publish(version="2.0.0")
