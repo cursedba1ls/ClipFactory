@@ -141,7 +141,7 @@ def make_media(ffmpeg: str, tmp: Path) -> dict:
     subprocess.run([ffmpeg, "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=25:d=24",
                     "-f", "lavfi", "-i", "sine=f=440:d=24", "-c:v", "libx264", "-preset", "ultrafast",
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(main)], check=True)
-    subprocess.run([ffmpeg, "-y", "-v", "error", "-f", "lavfi", "-i", "mandelbrot=s=480x360:r=30:d=15",
+    subprocess.run([ffmpeg, "-y", "-v", "error", "-f", "lavfi", "-i", "smptehdbars=s=480x360:r=30:d=15",
                     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(game)], check=True)
     srt = tmp / "subs.srt"
     srt.write_text("1\n00:00:01,000 --> 00:00:03,000\nПривет из теста\n\n2\n00:00:12,000 --> 00:00:14,000\n"
@@ -309,6 +309,11 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
+        try:  # keep the app's own logs with the CI artifact
+            for f in (DATA / "logs").glob("*.log"):
+                shutil.copy2(f, LOGS / f"app-{f.name}")
+        except OSError:
+            pass
         log = DATA / "logs" / "clipfactory.log"
         if log.is_file():
             print("\n--- clipfactory.log (tail) ---")
