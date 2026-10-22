@@ -49,6 +49,10 @@ export function plural(n, one, few, many) {
 
 const P = 'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
 export const icon = {
+  scissors: `<svg viewBox="0 0 24 24" ${P}><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/></svg>`,
+  merge: `<svg viewBox="0 0 24 24" ${P}><path d="M7 4v5a5 5 0 0 0 5 5 5 5 0 0 1 5 5v1M17 4v5a5 5 0 0 1-2 4"/><path d="m4 7 3-3 3 3"/></svg>`,
+  undo: `<svg viewBox="0 0 24 24" ${P}><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>`,
+  redo: `<svg viewBox="0 0 24 24" ${P}><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg>`,
   play: `<svg viewBox="0 0 24 24" ${P}><path d="M7 4.5v15l12-7.5z"/></svg>`,
   edit: `<svg viewBox="0 0 24 24" ${P}><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>`,
   refresh: `<svg viewBox="0 0 24 24" ${P}><path d="M20 11a8 8 0 0 0-14.8-4M4 4v4h4M4 13a8 8 0 0 0 14.8 4M20 20v-4h-4"/></svg>`,

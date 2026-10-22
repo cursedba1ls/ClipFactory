@@ -35,14 +35,30 @@ def backup_database(reason: str, db_path: Path | None = None) -> Path | None:
     d.mkdir(parents=True, exist_ok=True)
     dest = d / f"clipfactory-{reason}-{time.strftime('%Y%m%d-%H%M%S')}.db"
     tmp = dest.with_suffix(".tmp")
+    source = target = None
     try:
-        with sqlite3.connect(str(src), timeout=30) as source, sqlite3.connect(str(tmp)) as target:
-            source.backup(target)
+        # Connections are closed explicitly: sqlite3's context manager only commits, and an open
+        # handle keeps the file locked on Windows.
+        source = sqlite3.connect(str(src), timeout=30)
+        target = sqlite3.connect(str(tmp))
+        source.backup(target)
+        target.close()
+        target = None
         tmp.replace(dest)
     except (sqlite3.Error, OSError) as exc:
         log.warning("database backup (%s) failed: %s", reason, exc)
-        tmp.unlink(missing_ok=True)
+        if target is not None:
+            target.close()
+            target = None
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
+    finally:
+        for c in (source, target):
+            if c is not None:
+                c.close()
     prune(_reason_key(reason))
     log.info("database backup: %s", dest.name)
     return dest

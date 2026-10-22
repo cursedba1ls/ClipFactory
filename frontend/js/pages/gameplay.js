@@ -97,7 +97,7 @@ export async function render(root) {
     }
     box.innerHTML = `<div class="stack">${list.map((m) => `
       <div class="row nowrap" style="gap:14px;padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface)">
-        ${m.file_url ? `<video src="${esc(m.file_url)}#t=2" preload="metadata" muted loop playsinline style="width:150px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:#000" data-hover></video>`
+        ${m.file_url ? `<video src="${esc(m.file_url)}#t=2" poster="/api/media/${esc(m.id)}/frame?t=2&w=320" preload="none" muted loop playsinline style="width:150px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:#000" data-hover></video>`
           : `<div style="width:150px;aspect-ratio:16/9;display:grid;place-items:center;background:#000;border-radius:8px">${m.status === "error" ? icon.alert : '<div class="spinner"></div>'}</div>`}
         <div style="flex:1;min-width:0" class="stack">
           <div style="gap:4px" class="stack">

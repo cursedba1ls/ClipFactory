@@ -2,6 +2,7 @@ import { api } from "../api.js";
 import { openEditor } from "../editor.js";
 import { cropEditor, focusOf, sourceFromMedia } from "../crop-editor.js";
 import { settingsForm } from "../settings-form.js";
+import { desktop, openFolder } from "../desktop.js";
 import {
   $, $$, badge, confirmDialog, EPISODE_STATUS, esc, fmtDuration, fmtSecondsShort, icon, jobPanel, mediaInfoHtml,
   modal, plural, PROJECT_STATUS, SUB_STATUS, timelineHtml, toast, toastError,
@@ -26,6 +27,7 @@ export async function render(root, [projectId]) {
           <button data-act="retranscribe">${icon.mic}Распознать речь заново</button>
           <button data-act="captions">${icon.text}Обновить подписи и хештеги</button>
           <button data-act="settings">${icon.settings}Настройки проекта</button>
+          ${desktop.desktop ? `<button data-act="folder">${icon.film}Открыть папку с видео</button>` : ""}
           <button data-act="delete" class="danger">${icon.trash}Удалить проект</button>
         </div></div>
       </div>
@@ -191,6 +193,9 @@ export async function render(root, [projectId]) {
     if (d.act) {
       closeMenu();
       switch (d.act) {
+        case "folder":
+          openFolder(`project:${projectId}`);
+          break;
         case "approve-all":
           if (await confirmDialog("Одобрить все готовые части?", "Убедитесь, что вы просмотрели каждую часть. Одобренные части можно публиковать.", "Одобрить все"))
             act(() => api.post(`/api/projects/${projectId}/approve-all`), "Готовые части одобрены");
@@ -243,7 +248,7 @@ export async function render(root, [projectId]) {
     wrap.innerHTML = `<div class="field-label" style="margin-bottom:8px">Геймплей проекта</div>
       <div class="lib-list" style="margin-bottom:20px">${library.filter((g) => g.status === "ready").map((g) => `
         <div class="lib-item ${selected.has(g.id) ? "on" : ""}" data-gid="${esc(g.id)}"><div class="check">${icon.check}</div>
-        <video src="${esc(g.file_url)}#t=1" preload="metadata" muted></video>
+        <img class="thumb" src="/api/media/${esc(g.id)}/frame?t=1&w=320" alt="" loading="lazy">
         <div class="grow"><div class="t">${esc(g.title)}</div><div class="small muted">${fmtDuration(g.info?.duration)}</div></div></div>`).join("")}</div>`;
     wrap.appendChild(form.el);
     const cropWrap = document.createElement("div");

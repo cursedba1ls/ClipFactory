@@ -49,7 +49,7 @@ export function settingsForm(initial, { showCaption = true, showAdvanced = false
           </span>
         </div>
       </div>
-      <div class="field">
+      <div class="field full">
         <span class="field-label">Разделение экрана (мультфильм / геймплей)</span>
         ${seg("layout", LAYOUTS.map((l) => [l, `${layoutIcon(Number(l.split("/")[0]))}${l}`]), v.layout || "50/50")}
         <label class="switch mt-s"><input type="checkbox" data-k="divider" ${v.divider !== false ? "checked" : ""}><span class="track"></span><span class="small">Тонкая чёрная линия между частями экрана</span></label>

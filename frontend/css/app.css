@@ -229,7 +229,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 }
 .lib-item:hover { border-color: var(--border-strong); }
 .lib-item.on { border-color: var(--accent); background: var(--accent-soft); }
-.lib-item video { width: 72px; height: 42px; object-fit: cover; border-radius: 6px; background: #000; }
+.lib-item video, .lib-item img.thumb { width: 72px; height: 42px; object-fit: cover; border-radius: 6px; background: #000; flex: none; }
 .lib-item .t { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-item .grow { flex: 1; min-width: 0; }
 .check {

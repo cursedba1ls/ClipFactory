@@ -103,7 +103,7 @@ jobs:
           name: e2e-logs
           path: |
             build/e2e-logs
-            ${{ env.LOCALAPPDATA }}\ClipFactory\logs
+            ~/AppData/Local/ClipFactory/logs
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

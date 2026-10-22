@@ -36,9 +36,10 @@ OutputBaseFilename=ClipFactory-Setup-{#AppVersion}
 SetupIconFile={#IconFile}
 UninstallDisplayIcon={app}\ClipFactory.exe
 UninstallDisplayName=ClipFactory
-Compression=lzma2/ultra64
+Compression=lzma2/max
 SolidCompression=yes
-LZMANumBlockThreads=4
+; The 64-bit compressor runs in its own process (the compiler itself is 32-bit and runs out of memory).
+LZMAUseSeparateProcess=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0

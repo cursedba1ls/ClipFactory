@@ -37,9 +37,9 @@ export function mediaImport({ kind, title, onChange, initial = null, compact = f
     if (media && (media.status === "pending" || media.status === "downloading")) return drawPending();
     if (media && media.status === "ready") return drawReady();
     el.innerHTML = `
-      <div class="tabs"><button type="button" data-tab="url" class="${tab === "url" ? "on" : ""}">${icon.link} По ссылке</button>
-        <button type="button" data-tab="file" class="${tab === "file" ? "on" : ""}">${icon.upload} Файл с компьютера</button>
-        <button type="button" data-tab="search" class="${tab === "search" ? "on" : ""}">${icon.film} Поиск на YouTube</button></div>
+      <div class="tabs"><button type="button" data-tab="url" class="${tab === "url" ? "on" : ""}">${icon.link} Ссылка</button>
+        <button type="button" data-tab="file" class="${tab === "file" ? "on" : ""}">${icon.upload} Файл</button>
+        <button type="button" data-tab="search" class="${tab === "search" ? "on" : ""}">${icon.film} YouTube</button></div>
       ${media && media.status === "error" ? `<div class="alert err">${icon.alert}<div class="grow">${esc(media.error || "Ошибка загрузки")}</div></div>` : ""}
       <div ${tab === "url" ? "" : 'class="hidden"'}>
         <div class="input-row"><input type="url" data-url placeholder="https://… ссылка на видео" value="${esc(urlText || media?.source_url || "")}">

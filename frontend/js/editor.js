@@ -125,8 +125,8 @@ export async function openEditor(episodeId, onSaved) {
         <button class="btn sm" data-shift="-0.1" title="Сдвинуть все фразы раньше">−0,1 с</button>
         <button class="btn sm" data-shift="0.1" title="Сдвинуть все фразы позже">+0,1 с</button>
         <div class="spacer"></div>
-        <button class="btn sm icon" data-undo title="Отменить (Ctrl+Z)" ${undo.length ? "" : "disabled"}>↶</button>
-        <button class="btn sm icon" data-redo title="Повторить (Ctrl+Y)" ${redo.length ? "" : "disabled"}>↷</button>
+        <button class="btn sm icon" data-undo title="Отменить (Ctrl+Z)" ${undo.length ? "" : "disabled"}>${icon.undo}</button>
+        <button class="btn sm icon" data-redo title="Повторить (Ctrl+Y)" ${redo.length ? "" : "disabled"}>${icon.redo}</button>
       </div>
       ${timelineHtml()}
       <div class="small muted" style="margin:8px 0">Время — секунды от начала части (0–${num(ep.duration, 1)}).
@@ -142,8 +142,8 @@ export async function openEditor(episodeId, onSaved) {
           <input type="text" maxlength="300" data-f="text" value="${esc(c.text)}">
           <div class="cue-actions">
             <button class="btn sm icon" data-seek title="Воспроизвести фразу">${icon.play}</button>
-            <button class="btn sm icon" data-split title="Разрезать в текущем месте плеера">✂</button>
-            <button class="btn sm icon" data-merge title="Объединить со следующей" ${i < cues.length - 1 ? "" : "disabled"}>⤓</button>
+            <button class="btn sm icon" data-split title="Разрезать в текущем месте плеера">${icon.scissors}</button>
+            <button class="btn sm icon" data-merge title="Объединить со следующей" ${i < cues.length - 1 ? "" : "disabled"}>${icon.merge}</button>
             <button class="btn sm icon danger" data-del title="Удалить">${icon.trash}</button>
           </div>
         </div>`;
@@ -368,7 +368,7 @@ export async function openEditor(episodeId, onSaved) {
     pane.innerHTML = ready.length ? `
       <div class="lib-list" style="max-height:330px">${ready.map((x) => `
         <div class="lib-item ${x.id === gp.media_id ? "on" : ""}" data-gid="${esc(x.id)}"><div class="check">${icon.check}</div>
-          <video src="${esc(x.file_url)}#t=1" preload="metadata" muted></video>
+          <img class="thumb" src="/api/media/${esc(x.id)}/frame?t=1&w=320" alt="" loading="lazy">
           <div class="grow"><div class="t">${esc(x.title)}</div><div class="small muted">${fmtDuration(x.info?.duration)}</div></div></div>`).join("")}</div>
       <div class="form-grid mt">
         <label class="field"><span>Начать геймплей с секунды</span><input type="number" min="0" step="0.5" data-offset value="${num(gp.offset, 1)}"></label>

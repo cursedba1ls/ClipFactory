@@ -2,7 +2,7 @@ import { api } from "../api.js";
 import { mediaImport } from "../media-import.js";
 import { cropEditor, focusOf, sourceFromMedia } from "../crop-editor.js";
 import { settingsForm } from "../settings-form.js";
-import { clearDraft, debounce, draftTime, loadDraft, saveDraft } from "../drafts.js";
+import { clearDraft, debounce, draftTime, loadDraft, onDraftStatus, saveDraft } from "../drafts.js";
 import { $, $$, esc, fmtDuration, icon, timelineHtml, toast, toastError, plural } from "../ui.js";
 
 const DRAFT_KEY = "new-project";
@@ -36,6 +36,7 @@ export async function render(root) {
         <input type="text" id="title" maxlength="200" placeholder="По умолчанию — название видео" value="${esc(saved?.title || "")}"></label>
       <div id="settings"></div></div>
     <div class="row mt" style="justify-content:flex-end">
+      <span class="muted small draft-state" id="draft-state"></span><div style="flex:1"></div>
       <span class="muted small" id="create-hint"></span>
       <button class="btn primary lg" id="create" disabled>${icon.play}Создать видео</button></div>`;
 
@@ -128,7 +129,7 @@ export async function render(root) {
       <div class="lib-list">${items.map((m) => `
         <div class="lib-item ${selected.has(m.id) ? "on" : ""}" data-id="${esc(m.id)}">
           <div class="check">${icon.check}</div>
-          ${m.file_url ? `<video src="${esc(m.file_url)}#t=1" preload="metadata" muted></video>` : `<div class="spinner"></div>`}
+          ${m.file_url ? `<img class="thumb" src="/api/media/${esc(m.id)}/frame?t=1&w=320" alt="" loading="lazy">` : `<div class="spinner"></div>`}
           <div class="grow"><div class="t">${esc(m.title)}</div>
             <div class="small muted">${m.status === "ready" ? `${fmtDuration(m.info?.duration)} · ${m.info?.width}×${m.info?.height}` : "загружается…"}</div></div>
         </div>`).join("")}</div>
@@ -223,7 +224,15 @@ export async function render(root) {
     if (empty) clearDraft(DRAFT_KEY);
     else saveDraft(DRAFT_KEY, d);
   }
-  const schedulePersist = debounce(persist);
+  const schedulePersist = debounce(persist, 500);
+  const flushPersist = () => schedulePersist.flush();
+  window.addEventListener("pagehide", flushPersist);
+  const offDraft = onDraftStatus((d) => {
+    const el = $("#draft-state", root);
+    if (d.key !== DRAFT_KEY || !el) return;
+    el.textContent = d.state === "saved" ? `Черновик сохранён ${new Date(d.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`
+      : d.state === "saving" ? "Сохранение черновика…" : "";
+  });
   const draftEvents = ["input", "change", "pointerup", "click", "change-settings"];
   for (const type of draftEvents) root.addEventListener(type, schedulePersist);
 
@@ -242,6 +251,9 @@ export async function render(root) {
   updateCrop();
   updateSubs();
   return () => {
+    schedulePersist.flush();
+    window.removeEventListener("pagehide", flushPersist);
+    offDraft();
     for (const type of draftEvents) root.removeEventListener(type, schedulePersist);
     mainImp.destroy();
     gpImp.destroy();
