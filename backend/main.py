@@ -137,9 +137,10 @@ def create_app() -> FastAPI:
             parts.append(f"{loc}: {msg}" if loc else msg)
         return JSONResponse({"detail": "Некорректные данные — " + "; ".join(parts)}, status_code=422)
 
-    from backend.api import episodes, jobs, media, projects, publish, system
+    from backend.api import banners, episodes, jobs, media, projects, publish, system
 
-    for r in (system.router, media.router, projects.router, episodes.router, jobs.router, publish.router):
+    for r in (system.router, media.router, projects.router, episodes.router, jobs.router, publish.router,
+              banners.router):
         app.include_router(r)
 
     @app.get("/api/health-check", include_in_schema=False)

@@ -2,10 +2,41 @@
 import { $, $$, esc, icon } from "./ui.js";
 
 const OUT_W = 1080, OUT_H = 1920;
-const TOP = { "50/50": 0.5, "55/45": 0.55, "60/40": 0.6 };
+const STYLES = [
+  ["dynamic", "Динамично"], ["follow", "Следить за действием"], ["static", "Одна рамка на часть"],
+];
+const STYLE_HINTS = {
+  dynamic: "Рамка меняется на каждой смене сцены, плавно ведёт за героями и чередует общий, средний и крупный план",
+  follow: "Рамка меняется на каждой смене сцены и плавно ведёт за героями, без приближения",
+  static: "Одно положение рамки на всю часть — там, где больше всего действия",
+};
 
-function topHeight(layout) {
-  return Math.round((OUT_H * (TOP[layout] || 0.5)) / 2) * 2;
+// Same maths as backend video_composer.screen_regions: {main: [y, h], game: [y, h], banner: [y, h] | null}.
+export function screenRegions(layout = "50/50", banner = null, gameplayTop = false, H = OUT_H) {
+  const ratio = (Number(String(layout).split("/")[0]) || 50) / 100;
+  const bh = banner && banner.enabled ? Math.floor(Math.max(60, Math.min(700, Number(banner.height) || 240)) / 2) * 2 : 0;
+  const reserve = bh > 0 && (banner.mode || "reserve") === "reserve";
+  const avail = H - (reserve ? bh : 0);
+  const mainH = Math.round((avail * ratio) / 2) * 2, gameH = avail - mainH;
+  const order = gameplayTop ? [["game", gameH], ["main", mainH]] : [["main", mainH], ["game", gameH]];
+  if (reserve) order.splice({ top: 0, middle: 1, bottom: 2 }[banner.position] ?? 0, 0, ["banner", bh]);
+  const out = { banner: null };
+  let y = 0;
+  for (const [name, h] of order) { out[name] = [y, h]; y += h; }
+  if (bh && !reserve) {
+    const pos = banner.position || "top";
+    if (pos === "top") out.banner = [0, bh];
+    else if (pos === "bottom") out.banner = [H - bh, bh];
+    else {
+      const split = out[gameplayTop ? "main" : "game"][0];
+      out.banner = [Math.floor(Math.max(0, Math.min(H - bh, split - bh / 2)) / 2) * 2, bh];
+    }
+  }
+  return out;
+}
+
+export function splitY(r) {
+  return r.main[0] < r.game[0] ? r.main[0] + r.main[1] : r.main[0];
 }
 
 // Visible fraction of the picture (width, height) after cover-scaling + zoom — same maths as the renderer.
@@ -15,14 +46,15 @@ export function windowFractions(dims, targetW, targetH, zoom = 1) {
   return [Math.min(1, aDst / aSrc) / z, Math.min(1, aSrc / aDst) / z];
 }
 
-export function cropEditor({ main, game, layout = "50/50", crop = {}, auto = {}, divider = true, hint = "" }) {
+export function cropEditor({ main, game, layout = "50/50", crop = {}, auto = {}, divider = true, hint = "",
+  banner = null, gameplayTop = false }) {
   const st = {
-    mode: crop.mode || "auto",
+    mode: crop.mode || "auto", style: crop.style || "dynamic",
     main_x: crop.main_x ?? 0.5, main_y: crop.main_y ?? 0.5, main_zoom: crop.main_zoom ?? 1,
     game_x: crop.game_x ?? 0.5, game_y: crop.game_y ?? 0.5, game_zoom: crop.game_zoom ?? 1,
   };
   const autoVals = { main_x: auto.main_x ?? 0.5, main_y: auto.main_y ?? 0.5, game_x: auto.game_x ?? 0.5, game_y: auto.game_y ?? 0.5 };
-  let lay = layout;
+  let lay = layout, ban = banner, gTop = gameplayTop;
   const imgs = {};
   const el = document.createElement("div");
   el.className = "crop-ed";
@@ -41,9 +73,13 @@ export function cropEditor({ main, game, layout = "50/50", crop = {}, auto = {},
       <div class="seg" data-mode><button type="button" data-v="auto">${icon.refresh} Автоматически</button><button type="button" data-v="manual">Вручную</button></div>
       <span class="small muted" data-mode-hint></span>
     </div>
+    <div class="row" style="margin-bottom:12px" data-style-row>
+      <span class="small"><b>Стиль автокадрирования:</b></span>
+      <div class="seg" data-style>${STYLES.map(([v, l]) => `<button type="button" data-v="${v}">${l}</button>`).join("")}</div>
+    </div>
     <div class="crop-grid">
-      ${panel("main", "Мультфильм (верх)", main)}
-      ${panel("game", "Геймплей (низ)", game)}
+      ${panel("main", "Мультфильм", main)}
+      ${panel("game", "Геймплей", game)}
       <div><div class="small" style="margin-bottom:6px"><b>Результат</b></div><canvas width="270" height="480" class="crop-canvas"></canvas></div>
     </div>
     ${hint ? `<div class="small faint mt-s">${esc(hint)}</div>` : ""}`;
@@ -57,16 +93,18 @@ export function cropEditor({ main, game, layout = "50/50", crop = {}, auto = {},
   function geometry(key) {
     const src = key === "main" ? main : game;
     if (!src) return null;
-    const th = topHeight(lay);
-    const [wf, hf] = windowFractions(src.dims, OUT_W, key === "main" ? th : OUT_H - th, st[key + "_zoom"]);
+    const reg = screenRegions(lay, ban, gTop);
+    const [wf, hf] = windowFractions(src.dims, OUT_W, reg[key][1], st[key + "_zoom"]);
     const v = vals(key);
     return { wf, hf, left: v.x * (1 - wf), top: v.y * (1 - hf) };
   }
 
   function draw() {
     $$("[data-mode] button", el).forEach((b) => b.classList.toggle("on", b.dataset.v === st.mode));
+    $$("[data-style] button", el).forEach((b) => b.classList.toggle("on", b.dataset.v === st.style));
+    $("[data-style-row]", el).classList.toggle("hidden", st.mode !== "auto");
     $("[data-mode-hint]", el).textContent = st.mode === "auto"
-      ? "Чёрные полосы убираются, рамка следует за действием в каждой части"
+      ? STYLE_HINTS[st.style] || STYLE_HINTS.dynamic
       : "Перетащите рамку мышью, колёсиком или ползунком измените масштаб";
     for (const key of ["main", "game"]) {
       const g = geometry(key);
@@ -84,21 +122,55 @@ export function cropEditor({ main, game, layout = "50/50", crop = {}, auto = {},
 
   function preview() {
     const ctx = canvas.getContext("2d");
-    const W = canvas.width, H = canvas.height, th = Math.round(H * (TOP[lay] || 0.5));
+    const W = canvas.width, H = canvas.height, k = H / OUT_H;
+    const reg = screenRegions(lay, ban, gTop);
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
     for (const key of ["main", "game"]) {
       const img = imgs[key], g = geometry(key);
       if (!img || !img.complete || !img.naturalWidth || !g) continue;
       const iw = img.naturalWidth, ih = img.naturalHeight;
-      const [dy, dh] = key === "main" ? [0, th] : [th, H - th];
-      ctx.drawImage(img, g.left * iw, g.top * ih, g.wf * iw, g.hf * ih, 0, dy, W, dh);
+      ctx.drawImage(img, g.left * iw, g.top * ih, g.wf * iw, g.hf * ih, 0, reg[key][0] * k, W, reg[key][1] * k);
     }
-    if (divider) { ctx.fillStyle = "#000"; ctx.fillRect(0, th - 1, W, 2); }
+    const th = splitY(reg) * k;
+    const touching = reg.main[0] + reg.main[1] === reg.game[0] || reg.game[0] + reg.game[1] === reg.main[0];
+    if (divider && touching) { ctx.fillStyle = "#000"; ctx.fillRect(0, th - 1, W, 2); }
+    if (reg.banner) {
+      const [by, bh] = reg.banner;
+      if ((ban.mode || "reserve") === "reserve") { ctx.fillStyle = ban.background || "#000"; ctx.fillRect(0, by * k, W, bh * k); }
+      ctx.setLineDash([5, 4]); ctx.strokeStyle = "#ffd400"; ctx.lineWidth = 2;
+      ctx.strokeRect(2, by * k + 2, W - 4, bh * k - 4); ctx.setLineDash([]);
+      const bimg = bannerImg();
+      if (bimg && bimg.complete && bimg.naturalWidth) {
+        const s = Math.min(W / bimg.naturalWidth, (bh * k) / bimg.naturalHeight);
+        const dw = bimg.naturalWidth * s, dh = bimg.naturalHeight * s;
+        ctx.drawImage(bimg, (W - dw) / 2, by * k + (bh * k - dh) / 2, dw, dh);
+      } else if (!ban.text) {
+        ctx.fillStyle = "#ffd400"; ctx.font = "700 14px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("место для баннера", W / 2, (by + bh / 2) * k);
+      }
+      if (ban.text) {
+        ctx.font = `900 ${Math.max(8, (ban.text_size || 72) * k)}px 'Arial Black', Arial`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.lineWidth = 3; ctx.strokeStyle = "#000"; ctx.fillStyle = ban.text_color || "#fff";
+        ctx.strokeText(ban.text, W / 2, (by + bh / 2) * k, W - 16); ctx.fillText(ban.text, W / 2, (by + bh / 2) * k, W - 16);
+      }
+    }
     ctx.font = "900 26px 'Arial Black', Arial, sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.lineWidth = 6; ctx.strokeStyle = "#000"; ctx.fillStyle = "#fff"; ctx.lineJoin = "round";
     ctx.strokeText("субтитры", W / 2, th); ctx.fillText("субтитры", W / 2, th);
+  }
+
+  let bImg = null, bImgId = null;
+  function bannerImg() {
+    if (!ban || !ban.image_id) return null;
+    if (bImgId !== ban.image_id) {
+      bImgId = ban.image_id;
+      bImg = new Image();
+      bImg.onload = () => preview();
+      bImg.src = `/api/banners/${ban.image_id}.png`;
+    }
+    return bImg;
   }
 
   function setManual() {
@@ -151,6 +223,13 @@ export function cropEditor({ main, game, layout = "50/50", crop = {}, auto = {},
     $("[data-zoom]", box).addEventListener("input", (e) => { setManual(); st[key + "_zoom"] = Number(e.target.value); draw(); });
   }
 
+  $("[data-style]", el).addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    st.style = b.dataset.v;
+    draw();
+  });
+
   $("[data-mode]", el).addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -164,6 +243,12 @@ export function cropEditor({ main, game, layout = "50/50", crop = {}, auto = {},
     el,
     getValue: () => ({ ...st }),
     setLayout(l) { lay = l; draw(); },
+    setScreen({ layout: l, banner: b, gameplay_top: t, divider: d }) {
+      if (l) lay = l;
+      ban = b || null; gTop = !!t;
+      if (d !== undefined) divider = d;
+      draw();
+    },
     setDivider(d) { divider = d; draw(); },
   };
 }

@@ -38,9 +38,15 @@ class Numbering(BaseModel):
         return v
 
 
+Layout = Literal["40/60", "50/50", "55/45", "60/40", "65/35", "70/30"]
+
+
 class Crop(BaseModel):
     # auto: black bars removed + crop window follows the action in each part; manual: positions below
     mode: Literal["auto", "manual"] = "auto"
+    # automatic framing style: static — one position per part; follow — re-framed at every scene cut and
+    # gliding after the action; dynamic — follow + varied shot sizes (wide / medium / close-up)
+    style: Literal["static", "follow", "dynamic"] = "dynamic"
     main_x: float = Field(default=0.5, ge=0, le=1)
     main_y: float = Field(default=0.5, ge=0, le=1)
     main_zoom: float = Field(default=1.0, ge=1, le=3)
@@ -49,11 +55,26 @@ class Crop(BaseModel):
     game_zoom: float = Field(default=1.0, ge=1, le=3)
 
 
+class Banner(BaseModel):
+    """A strip for a banner (picture and/or text): its own space in the frame or drawn over the video."""
+    enabled: bool = False
+    mode: Literal["reserve", "overlay"] = "reserve"
+    position: Literal["top", "middle", "bottom"] = "top"
+    height: int = Field(default=240, ge=60, le=700)
+    background: str = Field(default="#000000", pattern=r"^#[0-9A-Fa-f]{6}$")
+    image_id: Optional[str] = Field(default=None, max_length=32, pattern=r"^[A-Za-z0-9]+$")
+    text: str = Field(default="", max_length=120)
+    text_color: str = Field(default="#FFFFFF", pattern=r"^#[0-9A-Fa-f]{6}$")
+    text_size: int = Field(default=72, ge=20, le=200)
+
+
 class ProjectSettings(BaseModel):
     episode_seconds: float = Field(default=60, ge=5, le=600)
     min_last_seconds: float = Field(default=3, ge=0, le=60)
-    layout: Literal["50/50", "55/45", "60/40"] = "50/50"
+    layout: Layout = "50/50"
+    gameplay_top: bool = False  # gameplay above the cartoon instead of below
     divider: bool = True  # thin black line between the cartoon and the gameplay
+    banner: Banner = Field(default_factory=Banner)
     subtitles_enabled: bool = True
     subtitle_style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     numbering: Numbering = Field(default_factory=Numbering)
@@ -87,6 +108,9 @@ class AppSettings(BaseModel):
 class MediaUrlIn(BaseModel):
     url: str = Field(max_length=2048)
     kind: Literal["main", "gameplay"]
+    # Download only a fragment (seconds), e.g. as much gameplay as the cartoon needs.
+    start: Optional[float] = Field(default=None, ge=0, le=86400 * 4)
+    end: Optional[float] = Field(default=None, gt=0, le=86400 * 4)
 
 
 class MediaPatch(BaseModel):
@@ -126,7 +150,7 @@ class EpisodeOverrides(BaseModel):
     subtitle_style: Optional[SubtitleStyle] = None
     numbering: Optional[Numbering] = None
     crop: Optional[Crop] = None
-    layout: Optional[Literal["50/50", "55/45", "60/40"]] = None
+    layout: Optional[Layout] = None
 
 
 class GameplayOverride(BaseModel):

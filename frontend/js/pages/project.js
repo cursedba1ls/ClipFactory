@@ -258,14 +258,17 @@ export async function render(root, [projectId]) {
       cropEd?.el.remove();
       cropEd = cropEditor({
         main: sourceFromMedia(mainMedia), game: sourceFromMedia(gpMedia, 0.1), layout: s.layout,
-        crop: project.settings.crop || {}, divider: s.divider,
+        crop: project.settings.crop || {}, divider: s.divider, banner: s.banner, gameplayTop: s.gameplay_top,
         auto: { main_x: focusOf(mainMedia).x, main_y: focusOf(mainMedia).y, game_x: focusOf(gpMedia).x, game_y: focusOf(gpMedia).y },
         hint: "В автоматическом режиме положение рамки подбирается отдельно для каждой части. «Вручную» — одно положение для всех частей (отдельную часть можно поправить в её редакторе).",
       });
       cropWrap.appendChild(cropEd.el);
     };
     buildCrop();
-    form.el.addEventListener("change-settings", () => { const s = form.getValue(); cropEd.setLayout(s.layout); cropEd.setDivider(s.divider); });
+    form.el.addEventListener("change-settings", () => {
+      const s = form.getValue();
+      cropEd.setScreen({ layout: s.layout, banner: s.banner, gameplay_top: s.gameplay_top, divider: s.divider });
+    });
     $$("[data-gid]", wrap).forEach((it) => it.onclick = () => {
       const id = it.dataset.gid;
       selected.has(id) ? selected.delete(id) : selected.add(id);

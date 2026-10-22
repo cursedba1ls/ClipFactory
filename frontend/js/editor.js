@@ -1,6 +1,7 @@
 // Episode editor modal: subtitle text/timing, style, crop, gameplay, numbering → save and re-render one part.
 import { api } from "./api.js";
-import { cropEditor } from "./crop-editor.js";
+import { cropEditor, screenRegions, splitY } from "./crop-editor.js";
+import { LAYOUTS } from "./settings-form.js";
 import { clearDraft, debounce, draftTime, loadDraft, saveDraft } from "./drafts.js";
 import { PRESETS } from "./settings-form.js";
 import { $, $$, esc, fmtDuration, icon, modal, toast, toastError } from "./ui.js";
@@ -18,7 +19,7 @@ const num = (v, d = 2) => (Math.round(Number(v) * 10 ** d) / 10 ** d).toFixed(d)
 function normCrop(c = {}) {
   const r = (v, d) => Math.round((Number(v ?? d) + Number.EPSILON) * 1000) / 1000;
   return {
-    mode: c.mode || "auto",
+    mode: c.mode || "auto", style: c.style || "dynamic",
     main_x: r(c.main_x, 0.5), main_y: r(c.main_y, 0.5), main_zoom: r(c.main_zoom, 1),
     game_x: r(c.game_x, 0.5), game_y: r(c.game_y, 0.5), game_zoom: r(c.game_zoom, 1),
   };
@@ -36,7 +37,9 @@ export async function openEditor(episodeId, onSaved) {
   let cropDraft = null;   // crop values restored from a local draft
   let saved = false;      // after a successful save the draft is gone and must not come back
   let tab = "subs";
-  const topPct = { "50/50": 50, "55/45": 55, "60/40": 60 };
+  // Where the split between the pictures is (percent of the height) for a layout — subtitles default there.
+  const regionsOf = (l) => screenRegions(l, eff.banner, eff.gameplay_top);
+  const splitPct = (l) => (splitY(regionsOf(l)) / 1920) * 100;
 
   const body = document.createElement("div");
   body.className = "editor";
@@ -116,7 +119,7 @@ export async function openEditor(episodeId, onSaved) {
   // ---------- style ----------
   function drawStyle() {
     const pane = $('[data-pane="style"]', body);
-    const pos = st.position ?? topPct[layout];
+    const pos = st.position ?? splitPct(layout);
     pane.innerHTML = `
       <div class="grid" style="grid-template-columns:minmax(0,1fr) 200px;gap:20px">
         <div class="stack">
@@ -180,8 +183,10 @@ export async function openEditor(episodeId, onSaved) {
     const box = $("[data-preview]", body);
     if (!box) return;
     const w = box.clientWidth || 200, scale = w / 1080;
-    const top = topPct[layout];
+    const reg = regionsOf(layout);
+    const top = splitPct(layout);
     const pos = st.position ?? top;
+    const pct = ([y, h]) => `top:${(y / 1920) * 100}%;height:${(h / 1920) * 100}%`;
     const text = (cues[0]?.text || "Пример субтитров").split(" ").slice(0, 5).join(" ");
     const shown = st.uppercase ? text.toUpperCase() : text;
     const words = shown.split(" ");
@@ -191,8 +196,9 @@ export async function openEditor(episodeId, onSaved) {
     const thumb = ep.thumb_url ? `url('${ep.thumb_url}')` : "none";
     const ol = Math.max(0, st.outline * scale);
     box.innerHTML = `
-      <div class="top" style="height:${top}%;background-image:${thumb};background-size:cover;background-position:top center"></div>
-      <div class="bottom" style="height:${100 - top}%;background-image:${thumb};background-size:cover;background-position:bottom center"></div>
+      <div style="position:absolute;left:0;right:0;${pct(reg.main)};background-image:${thumb};background-size:cover;background-position:top center"></div>
+      <div style="position:absolute;left:0;right:0;${pct(reg.game)};background-image:${thumb};background-size:cover;background-position:bottom center"></div>
+      ${reg.banner ? `<div style="position:absolute;left:0;right:0;${pct(reg.banner)};background:${esc(eff.banner.background || "#000")};outline:2px dashed #ffd400;outline-offset:-2px"></div>` : ""}
       <div class="sub" style="top:${pos}%;font-family:'${esc(st.font_family)}',Arial;font-size:${st.font_size * scale}px;font-weight:${st.bold ? 800 : 500};
         color:${st.text_color};-webkit-text-stroke:${ol * 2}px ${st.outline_color};paint-order:stroke fill">${html}</div>
       ${nb.enabled ? `<div class="lbl" style="${nb.position.startsWith("top") ? `top:${(nb.margin / 1920) * 100}%;transform:none` : `bottom:${(nb.margin / 1920) * 100}%;top:auto;transform:none`};
@@ -208,11 +214,11 @@ export async function openEditor(episodeId, onSaved) {
     const src = ep.crop_sources || {};
     pane.innerHTML = `
       <div class="field" style="margin-bottom:14px"><span class="field-label">Разделение экрана</span>
-        <div class="seg" data-layout>${["50/50", "55/45", "60/40"].map((l) => `<button type="button" data-v="${l}" class="${l === layout ? "on" : ""}">${l}</button>`).join("")}</div></div>
+        <div class="seg" data-layout>${LAYOUTS.map((l) => `<button type="button" data-v="${l}" class="${l === layout ? "on" : ""}">${l}</button>`).join("")}</div></div>
       <div data-crop-host></div>`;
     const r = eff.crop_resolved || {};
     cropEd = cropEditor({
-      main: src.main, game: src.game, layout,
+      main: src.main, game: src.game, layout, banner: eff.banner, gameplayTop: eff.gameplay_top,
       crop: cropDraft || { ...r, mode: crop.mode || "auto" },
       auto: { main_x: src.main?.auto?.x, main_y: src.main?.auto?.y, game_x: src.game?.auto?.x, game_y: src.game?.auto?.y },
       hint: "Видео масштабируется без искажений. Рамка показывает, что попадёт в кадр этой части.",

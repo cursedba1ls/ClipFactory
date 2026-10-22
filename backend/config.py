@@ -45,6 +45,7 @@ DIRS = {
     "logs": STORAGE / "logs",
     "models": STORAGE / "models",
     "secrets": STORAGE / "secrets",
+    "banners": STORAGE / "banners",
 }
 
 DB_PATH = STORAGE / "clipfactory.db"

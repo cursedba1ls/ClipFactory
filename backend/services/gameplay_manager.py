@@ -27,6 +27,8 @@ def gameplay_range(media: dict) -> tuple[float, float]:
     if end - start < MIN_TRIM:  # trim left nothing usable (e.g. only black frames): ignore it
         start, end = base_start, base_end
     return round(start, 3), round(end, 3)
+
+
 SAFETY_MARGIN = 0.5  # extra gameplay beyond the episode end, trimmed in the filter graph
 
 

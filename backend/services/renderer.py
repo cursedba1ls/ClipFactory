@@ -56,11 +56,22 @@ def effective_options(settings: dict, overrides: dict | None) -> dict:
     crop = dict(settings.get("crop") or {})
     crop.update(ov.get("crop") or {})
     layout = ov.get("layout") or settings.get("layout") or "50/50"
-    return {"subtitle_style": style, "numbering": numbering, "crop": crop, "layout": layout}
+    banner = dict(settings.get("banner") or {})
+    return {"subtitle_style": style, "numbering": numbering, "crop": crop, "layout": layout,
+            "banner": banner, "gameplay_top": bool(settings.get("gameplay_top"))}
+
+
+def regions(opts: dict) -> dict:
+    return video_composer.screen_regions(opts["layout"], opts.get("banner"), opts.get("gameplay_top", False))
+
+
+CAMERA_VERSION = 2  # bump to recompute stored automatic framing after algorithm changes
 
 
 def _auto_key(opts: dict) -> dict:
-    return {"layout": opts["layout"], "zoom": float(opts["crop"].get("main_zoom") or 1.0)}
+    return {"layout": opts["layout"], "zoom": float(opts["crop"].get("main_zoom") or 1.0),
+            "main_h": regions(opts)["main"][1], "style": opts["crop"].get("style") or "dynamic",
+            "v": CAMERA_VERSION}
 
 
 def auto_crop_needed(project: dict, episode: dict) -> bool:
@@ -72,14 +83,31 @@ def auto_crop_needed(project: dict, episode: dict) -> bool:
 
 
 def compute_auto_crop(project: dict, episode: dict, timeline: dict) -> dict:
-    """Where the action is in this part of the cartoon (crop window position)."""
+    """Where the action is in this part of the cartoon: one crop position, or a camera path per shot."""
     opts = effective_options(project["settings"], episode.get("overrides"))
-    top_h, _ = video_composer.layout_heights(opts["layout"])
+    top_h = regions(opts)["main"][1]
+    zoom = float(opts["crop"].get("main_zoom") or 1.0)
+    style = opts["crop"].get("style") or "dynamic"
+    box = timeline.get("content_box")
+    src_w, src_h = (box["w"], box["h"]) if box else (int(timeline["width"]), int(timeline["height"]))
+    if style != "static":
+        fps = Fraction(int(timeline["fps_num"]), int(timeline["fps_den"]))
+        out_fps = video_composer.output_fps(fps)
+        span = EpisodeSpan(episode["idx"], episode["start_frame"], episode["end_frame"],
+                           episode["start_time"], episode["end_time"], episode["duration"])
+        window = cut_window(span, fps, float(timeline.get("t0") or 0.0))
+        frames = smart_crop.part_frames(timeline["source_path"], video_composer.main_trim_chain(window, fps),
+                                        window.seek, box, src_w, src_h)
+        if frames is not None:
+            wf, hf = smart_crop.window_fractions(src_w, src_h, config.OUTPUT_WIDTH, top_h)
+            camera = smart_crop.plan_camera(frames, float(out_fps), wf, hf, style, zoom,
+                                            seed=int(project["settings"].get("seed") or 0) + episode["idx"])
+            first = camera[0]["keys"][0] if camera and camera[0]["keys"] else [0, 0.5, 0.5]
+            return {"main_x": first[1], "main_y": first[2], "camera": camera, **_auto_key(opts)}
     f = smart_crop.focus(timeline["source_path"], float(timeline.get("t0") or 0) + float(episode["start_time"]),
                          float(episode["duration"]), int(timeline["width"]), int(timeline["height"]),
-                         config.OUTPUT_WIDTH, top_h, timeline.get("content_box"),
-                         float(opts["crop"].get("main_zoom") or 1.0))
-    return {"main_x": f["x"], "main_y": f["y"], **_auto_key(opts)}
+                         config.OUTPUT_WIDTH, top_h, box, zoom)
+    return {"main_x": f["x"], "main_y": f["y"], "camera": None, **_auto_key(opts)}
 
 
 def resolve_crop(opts: dict, episode: dict, gameplay_media: dict | None) -> dict:
@@ -90,6 +118,8 @@ def resolve_crop(opts: dict, episode: dict, gameplay_media: dict | None) -> dict
         ac = episode.get("auto_crop") or {}
         crop["main_x"] = ac.get("main_x", 0.5)
         crop["main_y"] = ac.get("main_y", 0.5)
+        if (crop.get("style") or "dynamic") != "static" and ac.get("camera"):
+            crop["camera"] = ac["camera"]
         gf = ((gameplay_media or {}).get("info") or {}).get("focus") or {}
         crop["game_x"] = gf.get("x", 0.5)
         crop["game_y"] = gf.get("y", 0.5)
@@ -102,10 +132,11 @@ def write_subtitle_files(project: dict, episode: dict, total: int) -> tuple[Path
     paths = episode_paths(project["id"], episode["idx"], total)
     paths["dir"].mkdir(parents=True, exist_ok=True)
     cues = (episode.get("cues") or []) if settings.get("subtitles_enabled", True) else []
-    top_h, _ = video_composer.layout_heights(opts["layout"])
+    reg = regions(opts)
     ass = subtitle_generator.build_ass(
         cues, opts["subtitle_style"], opts["numbering"], episode["idx"] + 1, total,
-        float(episode["duration"]), top_h,
+        float(episode["duration"]), video_composer.split_y(reg),
+        banner=opts["banner"] if reg.get("banner") else None, banner_region=reg.get("banner"),
     )
     tmp = paths["ass"].with_suffix(".ass.tmp")
     tmp.write_text(ass, encoding="utf-8")
@@ -211,6 +242,12 @@ def render_episode(
     elif gameplay_media is not None:
         raise UserError("Файл геймплея не найден. Выберите другой геймплей для этой части.")
 
+    crop = resolve_crop(opts, episode, gameplay_media)
+    banner = None
+    if regions(opts).get("banner"):
+        banner = dict(opts["banner"])
+        img = banner_image_path(banner.get("image_id"))
+        banner["image_relpath"] = img.relative_to(config.STORAGE).as_posix() if img else None
     spec = video_composer.EpisodeRenderSpec(
         main_path=timeline["source_path"],
         window=window,
@@ -223,7 +260,10 @@ def render_episode(
         gameplay_audio=bool(settings.get("gameplay_audio")),
         gameplay_volume=float(settings.get("gameplay_volume", 0.15)),
         layout=opts["layout"],
-        crop=resolve_crop(opts, episode, gameplay_media),
+        crop=crop,
+        camera=crop.get("camera"),
+        gameplay_top=opts["gameplay_top"],
+        banner=banner,
         main_box=timeline.get("content_box"),
         game_box=((gameplay_media or {}).get("info") or {}).get("content_box") if gp_path else None,
         divider=bool(settings.get("divider", True)),
@@ -263,6 +303,13 @@ def render_episode(
         "thumb_path": str(paths["thumb"]) if paths["thumb"].is_file() else None,
         "verify": verify,
     }
+
+
+def banner_image_path(image_id: str | None) -> Path | None:
+    if not image_id or not str(image_id).isalnum():
+        return None
+    p = config.DIRS["banners"] / f"{image_id}.png"
+    return p if p.is_file() else None
 
 
 def _fontsdir() -> str | None:

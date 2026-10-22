@@ -56,7 +56,7 @@ def process_media(media_id: str, ctx: JobContext | None, p0: float = 0, p1: floa
             if ctx:
                 ctx.update(stage="Загрузка видео", progress=p0, message=f"Скачивание {kind_name}…", force=True)
             path, title = downloader.download_url(media["source_url"], dest, media_id, app.max_download_mb,
-                                                  on_dl, cancel)
+                                                  on_dl, cancel, media.get("fetch_start"), media.get("fetch_end"))
             db.update("media", media_id, {"path": str(path), "title": media.get("title") or title or None})
         if path is None or not path.is_file():
             raise UserError("Файл видео не найден. Загрузите его заново.")
@@ -315,7 +315,7 @@ def ensure_auto_crop(project: dict, timeline: dict, episodes: list[dict], ctx: J
     for i, e in enumerate(todo):
         ctx.check()
         ctx.update(stage="Автокадрирование", progress=p0 + (p1 - p0) * i / max(1, len(todo)),
-                   message=f"Поиск главного действия: часть {e['idx'] + 1} из {len(episodes)}")
+                   message=f"Поиск сцен и главного действия: часть {e['idx'] + 1} из {len(episodes)}")
         db.update("episodes", e["id"], {"auto_crop": renderer.compute_auto_crop(project, e, timeline)})
 
 
@@ -488,17 +488,17 @@ def job_build_series(ctx: JobContext) -> None:
         ensure_captions(project, episodes, transcript)
         ctx.check()
 
-        # 5b. Automatic framing of the cartoon for every part
-        ensure_auto_crop(db.get("projects", pid), timeline, episodes, ctx, 45, 47)
+        # 5b. Automatic framing of the cartoon for every part (scene cuts, camera path)
+        ensure_auto_crop(db.get("projects", pid), timeline, episodes, ctx, 45, 52)
         episodes = db.query("episodes", "project_id = ?", (pid,), "idx")
 
         # 6. Gameplay
-        ctx.update(stage="Подготовка геймплея", progress=45, message="Подбор фрагментов геймплея…", force=True)
+        ctx.update(stage="Подготовка геймплея", progress=52, message="Подбор фрагментов геймплея…", force=True)
         ensure_gameplay(project, episodes, project_gameplay_clips(project))
         episodes = db.query("episodes", "project_id = ?", (pid,), "idx")
 
         # 7. Subtitle files (editable .ass/.srt for every episode)
-        ctx.update(stage="Добавление субтитров", progress=47, message="Создание файлов субтитров…", force=True)
+        ctx.update(stage="Добавление субтитров", progress=53, message="Создание файлов субтитров…", force=True)
         project = db.get("projects", pid)
         for e in episodes:
             renderer.write_subtitle_files(project, e, len(episodes))
@@ -506,7 +506,7 @@ def job_build_series(ctx: JobContext) -> None:
         # 8–10. Render every episode that is not ready yet (resumes after restart)
         todo = [e for e in episodes if rerender_all or e["status"] != "ready"
                 or not e.get("video_path") or not Path(e["video_path"]).is_file()]
-        errors = render_many(project, todo, timeline, ctx, 48, 97)
+        errors = render_many(project, todo, timeline, ctx, 54, 97)
 
         # 11. Verify outputs
         ctx.update(stage="Проверка результата", progress=98, message="Проверка файлов…", force=True)

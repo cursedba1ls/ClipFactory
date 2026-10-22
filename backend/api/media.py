@@ -28,6 +28,14 @@ def list_media(kind: str | None = Query(default=None, pattern="^(main|gameplay)$
     return [media_out(m) for m in rows]
 
 
+@router.get("/search")
+def search(q: str = Query(min_length=1, max_length=200), cc: bool = True,
+           limit: int = Query(12, ge=1, le=40), min_seconds: float = Query(0, ge=0),
+           max_seconds: float = Query(0, ge=0)):
+    """YouTube search for the main video (animation) or gameplay; Creative Commons only by default."""
+    return {"results": downloader.search_videos(q, limit, cc, min_seconds, max_seconds), "creative_commons": cc}
+
+
 @router.get("/{media_id}")
 def get_media(media_id: str):
     m = get_or_404("media", media_id, "Видео")
@@ -42,8 +50,13 @@ def get_media(media_id: str):
 @router.post("/url")
 def add_url(body: MediaUrlIn):
     url = downloader.validate_url(body.url)
+    if body.end is not None and body.end - (body.start or 0.0) < 3.0:
+        raise UserError("Фрагмент должен быть не короче 3 секунд.")
+    fs = round(body.start, 3) if body.start else None
+    fe = round(body.end, 3) if body.end is not None else None
     existing = db.query("media", "source_url = ? AND kind = ? AND status IN ('ready','pending','downloading')",
                         (url, body.kind), "created_at DESC")
+    existing = [m for m in existing if (m.get("fetch_start"), m.get("fetch_end")) == (fs, fe)]
     for m in existing:
         if m["status"] != "ready" or (m.get("path") and Path(m["path"]).is_file()):
             job = manager.enqueue("download", media_id=m["id"]) if m["status"] != "ready" else None
@@ -53,6 +66,7 @@ def add_url(body: MediaUrlIn):
             return out
     m = db.insert("media", {
         "id": db.new_id(), "kind": body.kind, "source_url": url, "status": "pending", "created_at": db.now(),
+        "fetch_start": fs, "fetch_end": fe,
     })
     job = manager.enqueue("download", media_id=m["id"])
     out = media_out(m)

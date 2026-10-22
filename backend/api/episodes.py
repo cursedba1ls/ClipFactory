@@ -37,6 +37,7 @@ def get_episode(episode_id: str):
     out["effective"]["numbering"] = subtitle_generator.resolve_numbering(out["effective"]["numbering"])
     gp = db.get("media", (e.get("gameplay") or {}).get("media_id") or "") if e.get("gameplay") else None
     out["effective"]["crop_resolved"] = renderer.resolve_crop(out["effective"], e, gp)
+    out["effective"]["crop_resolved"].pop("camera", None)
     out["crop_sources"] = crop_sources(p, e, gp)
     return out
 

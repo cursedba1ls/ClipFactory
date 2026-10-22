@@ -13,7 +13,7 @@ import threading
 import unicodedata
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlsplit
+from urllib.parse import quote_plus, urlsplit
 
 from backend import config
 from backend.errors import Cancelled, UserError
@@ -115,8 +115,13 @@ def download_url(
     max_mb: int = 4096,
     on_progress: Callable[[float, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    start: float | None = None,
+    end: float | None = None,
 ) -> tuple[Path, str]:
-    """Download a single video with yt-dlp. Returns (path, title)."""
+    """Download a single video with yt-dlp. Returns (path, title).
+
+    start/end (seconds) download only that fragment — e.g. a few minutes of an hour-long gameplay stream.
+    """
     url = validate_url(url)
     try:
         import yt_dlp
@@ -163,6 +168,14 @@ def download_url(
     }
     if ff:
         opts["ffmpeg_location"] = os.path.dirname(ff)
+    if start is not None or end is not None:
+        from yt_dlp.utils import download_range_func
+        s0 = max(0.0, float(start or 0.0))
+        s1 = float(end) if end is not None else float("inf")
+        if s1 - s0 < 1.0:
+            raise UserError("Фрагмент для скачивания должен быть длиннее секунды.")
+        opts["download_ranges"] = download_range_func(None, [(s0, s1)])
+        opts["force_keyframes_at_cuts"] = True  # frame-exact fragment edges (re-encoded at the cut)
     title = ""
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -202,6 +215,61 @@ def download_url(
             except OSError:
                 pass
     return path, title
+
+
+CC_FILTER = "EgIwAQ%3D%3D"  # YouTube search filter: Creative Commons licence only
+
+
+def search_videos(query: str, limit: int = 12, creative_commons: bool = True,
+                  min_seconds: float = 0, max_seconds: float = 0) -> list[dict]:
+    """Search YouTube (flat listing, nothing downloaded). Creative Commons videos only by default —
+    those may be reused under their licence; anything else needs the rights holder's permission."""
+    query = " ".join((query or "").split())
+    if not query:
+        raise UserError("Введите, что искать.")
+    if len(query) > 200:
+        raise UserError("Слишком длинный запрос.")
+    try:
+        import yt_dlp
+    except ImportError as exc:
+        raise UserError("Модуль yt-dlp не установлен. Запустите setup.bat ещё раз.") from exc
+    limit = max(1, min(40, int(limit)))
+    if creative_commons:
+        url = f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp={CC_FILTER}"
+    else:
+        url = f"ytsearch{limit * 2}:{query}"
+    opts = {"extract_flat": "in_playlist", "quiet": True, "no_warnings": True, "skip_download": True,
+            "playlistend": limit * 2, "logger": _QuietLogger(), "socket_timeout": 30}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception as exc:
+        raise _map_ytdlp_error(str(exc), 0) from exc
+    out = []
+    for e in info.get("entries") or []:
+        if not e or not e.get("id") or e.get("ie_key") not in (None, "Youtube"):
+            continue
+        dur = float(e.get("duration") or 0)
+        if e.get("live_status") in ("is_live", "is_upcoming"):
+            continue
+        if min_seconds and dur and dur < min_seconds:
+            continue
+        if max_seconds and dur and dur > max_seconds:
+            continue
+        thumbs = e.get("thumbnails") or []
+        out.append({
+            "id": e["id"],
+            "url": f"https://www.youtube.com/watch?v={e['id']}",
+            "title": e.get("title") or "",
+            "channel": e.get("channel") or e.get("uploader") or "",
+            "duration": dur or None,
+            "views": e.get("view_count"),
+            "thumbnail": f"https://i.ytimg.com/vi/{e['id']}/mqdefault.jpg" if not thumbs else thumbs[-1].get("url"),
+            "creative_commons": creative_commons,
+        })
+        if len(out) >= limit:
+            break
+    return out
 
 
 def check_upload_name(filename: str) -> str:

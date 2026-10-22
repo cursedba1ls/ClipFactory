@@ -632,7 +632,9 @@ def resolve_label_position(numbering: dict, style: dict, sub_center_y: float, ha
 def build_ass(cues: list[dict], style: dict | None, numbering: dict | None,
               episode_number: int, total_episodes: int, duration: float,
               top_height: int, width: int = config.OUTPUT_WIDTH,
-              height: int = config.OUTPUT_HEIGHT) -> str:
+              height: int = config.OUTPUT_HEIGHT, banner: dict | None = None,
+              banner_region: tuple[int, int] | None = None) -> str:
+    """ASS file of one part. top_height is the y of the split between the pictures (subtitles default)."""
     st = resolve_style(style)
     nb = resolve_numbering(numbering)
     center_y = (st["position"] / 100.0 * height) if st.get("position") is not None else float(top_height)
@@ -660,6 +662,7 @@ def build_ass(cues: list[dict], style: dict | None, numbering: dict | None,
         f"{outline_c},{back},{bold},0,0,0,100,100,0,0,1,{st['outline']:g},{st['shadow']:g},5,40,40,0,1",
         f"Style: Label,{st['font_family']},{nb['size']},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,"
         f"-1,0,0,0,100,100,0,0,1,{max(2.0, nb['size'] / 14):.1f},0,8,40,40,0,1",
+        *_banner_style(banner),
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -677,11 +680,32 @@ def build_ass(cues: list[dict], style: dict | None, numbering: dict | None,
               ("bottom", "left"): 1, ("bottom", "center"): 2, ("bottom", "right"): 3}[(vert, horiz)]
         x = {"left": 50, "center": width // 2, "right": width - 50}[horiz]
         y = nb["margin"] if vert == "top" else height - nb["margin"]
+        if banner_region:
+            # Keep the label off the banner strip.
+            by, bh = banner_region
+            lh = nb["size"] * 1.3
+            y0, y1 = (y, y + lh) if vert == "top" else (y - lh, y)
+            if y0 < by + bh and y1 > by:
+                y = by + bh + 24 if vert == "top" else by - 24
         text = ass_escape(label_text(nb, episode_number, total_episodes))
         events.append(
             f"Dialogue: 1,{ass_time(0)},{ass_time(duration + 1)},Label,,0,0,0,,{{\\an{an}\\pos({x},{y})}}{text}"
         )
+    if banner_region and (banner or {}).get("text", "").strip():
+        by, bh = banner_region
+        text = ass_escape(" ".join(banner["text"].split()))
+        events.append(f"Dialogue: 2,{ass_time(0)},{ass_time(duration + 1)},Banner,,0,0,0,,"
+                      f"{{\\an5\\q0\\pos({width // 2},{by + bh // 2})}}{text}")
     return "\n".join(lines + events) + "\n"
+
+
+def _banner_style(banner: dict | None) -> list[str]:
+    if not banner or not (banner.get("text") or "").strip():
+        return []
+    size = int(banner.get("text_size") or 72)
+    color = ass_color(banner.get("text_color") or "#FFFFFF")
+    return [f"Style: Banner,Arial Black,{size},{color},{color},&H00000000,&H80000000,"
+            f"-1,0,0,0,100,100,0,0,1,{max(2.0, size / 16):.1f},0,5,40,40,0,1"]
 
 
 def _cue_events(cue: dict, st: dict, cx: float, cy: float) -> list[str]:

@@ -51,14 +51,16 @@ export async function render(root) {
     card.classList.remove("hidden");
     const key = `${m.id}|${g.id}`;
     const s = form.getValue();
-    if (key === cropKey && cropEd) { cropEd.setLayout(s.layout); cropEd.setDivider(s.divider); return; }
+    const screen = { layout: s.layout, banner: s.banner, gameplay_top: s.gameplay_top, divider: s.divider };
+    if (key === cropKey && cropEd) { cropEd.setScreen(screen); return; }
     cropKey = key;
     const prev = cropEd ? cropEd.getValue() : (cropDraft || defaults.crop || {});
     $("#crop", root).innerHTML = "";
     cropEd = cropEditor({
       main: sourceFromMedia(m), game: sourceFromMedia(g, 0.1), layout: s.layout, crop: prev, divider: s.divider,
+      banner: s.banner, gameplayTop: s.gameplay_top,
       auto: { main_x: focusOf(m).x, main_y: focusOf(m).y, game_x: focusOf(g).x, game_y: focusOf(g).y },
-      hint: "«Автоматически»: чёрные полосы убираются, а рамка в каждой части ставится туда, где происходит действие. Зелёная пунктирная рамка — примерное положение для всего видео.",
+      hint: "«Автоматически»: чёрные полосы убираются, а рамка в каждой части ставится туда, где происходит действие. Зелёная пунктирная рамка — примерное положение для всего видео. Жёлтая пунктирная рамка — место для баннера.",
     });
     $("#crop", root).appendChild(cropEd.el);
   }
@@ -97,15 +99,17 @@ export async function render(root) {
     if (del) del.onclick = async () => { try { await api.del(`/api/media/${m.id}/subtitles`); } catch (e) { toastError(e); } updateSubs(); };
   }
 
+  let gpImp = null;
   const mainImp = mediaImport({
     kind: "main",
     initial: savedMain,
-    onChange: () => { updatePlan(); updateButton(); updateCrop(); updateSubs(); schedulePersist(); },
+    onChange: () => { updatePlan(); updateButton(); updateCrop(); updateSubs(); schedulePersist(); gpImp?.redraw(); },
   });
   $("#main-import", root).appendChild(mainImp.el);
 
-  const gpImp = mediaImport({
+  gpImp = mediaImport({
     kind: "gameplay",
+    neededSeconds: () => (mainImp.media?.status === "ready" ? mainImp.media.info?.duration : null),
     onChange: (m) => {
       if (m && m.status !== "error") selected.add(m.id);
       refreshLibrary().then(updateCrop);

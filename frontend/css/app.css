@@ -427,3 +427,13 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .crop-rect.auto { border-style: dashed; border-color: var(--ok); }
 .crop-canvas { width: 100%; aspect-ratio: 9 / 16; border-radius: 12px; background: #000; display: block; }
 @media (max-width: 960px) { .crop-grid { grid-template-columns: 1fr; } .crop-canvas { max-width: 220px; } }
+
+/* YouTube search results */
+.yt-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; max-height: 420px; overflow: auto; }
+.yt-item { position: relative; display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 6px; border-radius: 10px;
+  border: 1px solid var(--border, #333); background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.yt-item:hover { border-color: var(--accent, #7c5cff); }
+.yt-item img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: #222; }
+.yt-item .yt-dur { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.75); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 4px; }
+.yt-item .yt-dur:empty { display: none; }
+.yt-item .yt-t { font-size: 13px; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

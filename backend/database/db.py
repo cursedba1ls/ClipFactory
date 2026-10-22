@@ -155,7 +155,8 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
-MIGRATIONS = [("episodes", "auto_crop", "TEXT"), ("media", "trim_start", "REAL"), ("media", "trim_end", "REAL")]
+MIGRATIONS = [("episodes", "auto_crop", "TEXT"), ("media", "trim_start", "REAL"), ("media", "trim_end", "REAL"),
+              ("media", "fetch_start", "REAL"), ("media", "fetch_end", "REAL")]
 
 
 def init_db() -> None:

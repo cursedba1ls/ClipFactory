@@ -1,5 +1,5 @@
 // Series settings form shared by "Новый проект", project settings and default settings.
-import { esc, $, $$ } from "./ui.js";
+import { esc, icon, toast, toastError, $, $$ } from "./ui.js";
 
 export const PRESETS = [
   { id: "bigword", name: "Крупно по слову", sample: `<span style="font-family:'Arial Black',Arial;font-weight:900;font-size:24px;color:#fff;-webkit-text-stroke:2.4px #000;paint-order:stroke fill">аа</span>` },
@@ -10,6 +10,9 @@ export const PRESETS = [
 ];
 
 const DURATIONS = [30, 45, 60, 90];
+export const LAYOUTS = ["40/60", "50/50", "55/45", "60/40", "65/35", "70/30"];
+export const BANNER_DEFAULT = { enabled: false, mode: "reserve", position: "top", height: 240, background: "#000000",
+  image_id: null, text: "", text_color: "#FFFFFF", text_size: 72 };
 const LABEL_FORMATS = ["Часть {n}/{total}", "Part {n}/{total}", "Серия {n}/{total}", "Часть {n}"];
 const LABEL_POSITIONS = [
   ["top-center", "Сверху по центру"], ["top-left", "Сверху слева"], ["top-right", "Сверху справа"],
@@ -30,6 +33,8 @@ export function settingsForm(initial, { showCaption = true, showAdvanced = false
   v.subtitle_style = v.subtitle_style || { preset: "bigword" };
   v.numbering = v.numbering || { enabled: true, format: "Часть {n}/{total}", position: "top-center", size: 54, margin: 70 };
   v.crop = v.crop || { main_x: 0.5, main_y: 0.5, game_x: 0.5, game_y: 0.5 };
+  v.banner = { ...BANNER_DEFAULT, ...(v.banner || {}) };
+  const b = v.banner;
   const custom = !DURATIONS.includes(Number(v.episode_seconds));
   const el = document.createElement("div");
   el.className = "stack";
@@ -46,8 +51,9 @@ export function settingsForm(initial, { showCaption = true, showAdvanced = false
       </div>
       <div class="field">
         <span class="field-label">Разделение экрана (мультфильм / геймплей)</span>
-        ${seg("layout", [["50/50", `${layoutIcon(50)}50/50`], ["55/45", `${layoutIcon(55)}55/45`], ["60/40", `${layoutIcon(60)}60/40`]], v.layout || "50/50")}
+        ${seg("layout", LAYOUTS.map((l) => [l, `${layoutIcon(Number(l.split("/")[0]))}${l}`]), v.layout || "50/50")}
         <label class="switch mt-s"><input type="checkbox" data-k="divider" ${v.divider !== false ? "checked" : ""}><span class="track"></span><span class="small">Тонкая чёрная линия между частями экрана</span></label>
+        <label class="switch mt-s"><input type="checkbox" data-k="gameplay_top" ${v.gameplay_top ? "checked" : ""}><span class="track"></span><span class="small">Геймплей сверху, мультфильм снизу</span></label>
       </div>
       <div class="field">
         <span class="field-label">Качество экспорта</span>
@@ -94,6 +100,28 @@ export function settingsForm(initial, { showCaption = true, showAdvanced = false
         </div>
         <div class="small faint mt-s ${v.gameplay_audio ? "hidden" : ""}" data-muted-note>По умолчанию звук геймплея выключен.</div>
       </div>
+      <div class="field full" data-banner>
+        <label class="switch"><input type="checkbox" data-k="banner.enabled" ${b.enabled ? "checked" : ""}><span class="track"></span><span>Место для баннера</span></label>
+        <div class="small faint mt-s">Полоса под рекламу, призыв подписаться или логотип: картинка и/или текст на всех частях.</div>
+        <div class="form-grid mt-s ${b.enabled ? "" : "hidden"}" data-banner-opts>
+          <div class="field"><span class="field-label">Как размещать</span>
+            ${seg("banner.mode", [["reserve", "Отдельная полоса"], ["overlay", "Поверх видео"]], b.mode)}</div>
+          <div class="field"><span class="field-label">Где</span>
+            ${seg("banner.position", [["top", "Сверху"], ["middle", "Между экранами"], ["bottom", "Снизу"]], b.position)}</div>
+          <label class="field"><span>Высота полосы</span><div class="slider-row">
+            <input type="range" min="60" max="700" step="10" data-k="banner.height" value="${esc(b.height)}"><output>${esc(b.height)} px</output></div></label>
+          <div class="field"><span class="field-label">Фон полосы</span>
+            <input type="color" data-k="banner.background" value="${esc(b.background)}" title="Цвет фона полосы"></div>
+          <div class="field full"><span class="field-label">Картинка баннера (PNG/JPG)</span>
+            <div class="row" data-banner-img></div>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" class="hidden" data-banner-file></div>
+          <label class="field"><span>Текст на баннере (необязательно)</span>
+            <input type="text" maxlength="120" data-k="banner.text" placeholder="Подпишись, чтобы не пропустить!" value="${esc(b.text)}"></label>
+          <div class="field"><span class="field-label">Цвет и размер текста</span><div class="row">
+            <input type="color" data-k="banner.text_color" value="${esc(b.text_color)}">
+            <div class="slider-row grow"><input type="range" min="20" max="200" step="2" data-k="banner.text_size" value="${esc(b.text_size)}"><output>${esc(b.text_size)}</output></div></div></div>
+        </div>
+      </div>
       ${showCaption ? `
       <label class="field"><span>Название для подписей (необязательно)</span>
         <input type="text" maxlength="100" data-k="caption_title" placeholder="Например: Том и Джерри" value="${esc(v.caption_title || "")}"></label>
@@ -123,8 +151,42 @@ export function settingsForm(initial, { showCaption = true, showAdvanced = false
   $("[data-k=divider]", el).addEventListener("change", emit);
   $$("input[type=range]", el).forEach((r) => r.addEventListener("input", () => {
     const out = r.parentElement.querySelector("output");
-    if (out) out.textContent = `${Math.round(r.value * 100)}%`;
+    if (!out) return;
+    if (r.dataset.k === "banner.height") out.textContent = `${r.value} px`;
+    else if (r.dataset.k === "banner.text_size") out.textContent = r.value;
+    else out.textContent = `${Math.round(r.value * 100)}%`;
   }));
+  $("[data-k=gameplay_top]", el).addEventListener("change", emit);
+  const be = $('[data-k="banner.enabled"]', el);
+  be.addEventListener("change", () => { $("[data-banner-opts]", el).classList.toggle("hidden", !be.checked); emit(); });
+  $$("[data-banner-opts] input", el).forEach((i) => i.addEventListener("input", emit));
+  const imgBox = $("[data-banner-img]", el), fileInput = $("[data-banner-file]", el);
+  function drawBannerImg() {
+    imgBox.innerHTML = b.image_id
+      ? `<img src="/api/banners/${esc(b.image_id)}.png" alt="" style="max-height:64px;max-width:260px;border-radius:6px;background:repeating-conic-gradient(#888 0 25%,#ccc 0 50%) 0 0/12px 12px">
+         <button class="btn sm" type="button" data-banner-pick>${icon.upload}Заменить</button>
+         <button class="btn sm ghost" type="button" data-banner-del>${icon.trash}Убрать</button>`
+      : `<button class="btn sm" type="button" data-banner-pick>${icon.upload}Загрузить картинку</button>
+         <span class="small faint">Без картинки останется пустая полоса — место под баннер.</span>`;
+    $("[data-banner-pick]", imgBox).onclick = () => fileInput.click();
+    const del = $("[data-banner-del]", imgBox);
+    if (del) del.onclick = () => { b.image_id = null; drawBannerImg(); emit(); };
+  }
+  fileInput.onchange = async () => {
+    const f = fileInput.files[0];
+    fileInput.value = "";
+    if (!f) return;
+    try {
+      const resp = await fetch(`/api/banners?filename=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Не удалось загрузить картинку");
+      b.image_id = data.id;
+      toast("Картинка баннера загружена", "ok");
+      drawBannerImg();
+      emit();
+    } catch (e) { toastError(e); }
+  };
+  drawBannerImg();
   const ga = $("[data-k=gameplay_audio]", el);
   ga.addEventListener("change", () => {
     $("[data-volume-wrap]", el).classList.toggle("hidden", !ga.checked);
@@ -143,6 +205,13 @@ export function settingsForm(initial, { showCaption = true, showAdvanced = false
     out.episode_seconds = d === "custom" ? Number($("[data-custom]", el).value) : Number(d);
     out.layout = segVal("layout");
     out.divider = $("[data-k=divider]", el).checked;
+    out.gameplay_top = $("[data-k=gameplay_top]", el).checked;
+    out.banner = {
+      ...b, enabled: be.checked, mode: segVal("banner.mode"), position: segVal("banner.position"),
+      height: Number($('[data-k="banner.height"]', el).value), background: $('[data-k="banner.background"]', el).value,
+      text: $('[data-k="banner.text"]', el).value.trim(), text_color: $('[data-k="banner.text_color"]', el).value,
+      text_size: Number($('[data-k="banner.text_size"]', el).value),
+    };
     out.quality = segVal("quality");
     out.language = segVal("language");
     out.gameplay_mode = segVal("gameplay_mode");
