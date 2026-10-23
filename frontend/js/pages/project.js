@@ -4,6 +4,7 @@ import { cropEditor, focusOf, sourceFromMedia } from "../crop-editor.js";
 import { settingsForm } from "../settings-form.js";
 import { desktop, openFolder } from "../desktop.js";
 import { celebrate } from "../motion.js";
+import { autopublishCard } from "../autopublish-card.js";
 import {
   $, $$, badge, confirmDialog, EPISODE_STATUS, esc, fmtDuration, fmtSecondsShort, icon, jobPanel, mediaInfoHtml,
   modal, plural, PROJECT_STATUS, renderJobs, setHtml, SUB_STATUS, timelineHtml, toast, toastError,
@@ -37,9 +38,12 @@ export async function render(root, [projectId]) {
     <div id="warnings"></div>
     <div class="grid grid-2 mt" id="info"></div>
     <div class="card mt"><div class="card-head"><h2>Таймлайн серии</h2><div class="spacer"></div><span class="hint" id="tl-hint"></span></div><div id="timeline"></div></div>
+    <div class="card mt" id="autopub"></div>
     <div class="card-head mt" style="margin-top:26px"><h2>Части</h2><div class="spacer"></div><span class="hint" id="ep-hint"></span></div>
     <div class="episodes" id="episodes"></div>`;
 
+  const autopub = autopublishCard($("#autopub", root), projectId);
+  let autopubAt = Date.now();
   const titleInput = $("#title", root);
   titleInput.addEventListener("change", async () => {
     try { project = await api.patch(`/api/projects/${projectId}`, { title: titleInput.value }); toast("Название сохранено", "ok", 2000); }
@@ -318,6 +322,7 @@ export async function render(root, [projectId]) {
   async function loop() {
     if (stopped) return;
     try { await reload(); } catch { /* server restarting */ }
+    if (Date.now() - autopubAt > 30000) { autopubAt = Date.now(); autopub.refresh(); }
     setTimeout(loop, project.active_jobs.length ? 1500 : 5000);
   }
   setTimeout(loop, 1500);

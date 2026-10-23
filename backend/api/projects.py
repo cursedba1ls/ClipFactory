@@ -15,7 +15,7 @@ from backend.database import db
 from backend.errors import UserError
 from backend.jobs.queue import manager
 from backend.jobs import pipeline
-from backend.models.schemas import BuildRequest, ProjectCreate, ProjectPatch
+from backend.models.schemas import AutoPublish, BuildRequest, ProjectCreate, ProjectPatch
 from backend.services import fsutil, renderer
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -93,6 +93,9 @@ def patch_project(project_id: str, body: ProjectPatch):
     if body.settings is not None:
         new = body.settings.model_dump()
         old = p.get("settings") or {}
+        # Automatic publication has its own endpoint: a settings form opened earlier must not overwrite it.
+        if "autopublish" in old:
+            new["autopublish"] = old["autopublish"]
         new["seed"] = old.get("seed") or new.get("seed") or random.randint(1, 2**31 - 1)
         values["settings"] = new
         visual_keys = ("layout", "divider", "subtitle_style", "numbering", "crop", "quality", "main_audio", "gameplay_audio",
@@ -179,3 +182,55 @@ def delete_project(project_id: str):
     db.connect().execute("DELETE FROM episodes WHERE project_id = ?", (project_id,))
     db.delete("projects", project_id)
     return {"ok": True}
+
+
+# --- automatic TikTok publication of the series ------------------------------------------------
+
+def _autopublish_out(p: dict) -> dict:
+    from backend.services import autopublish
+
+    ap = autopublish.settings_of(p)
+    eps = db.query("episodes", "project_id = ?", (p["id"],), "idx")
+    client = pipeline.tiktok_client()
+    connected = client.is_configured() and bool(client.tokens())
+    privacy = None
+    if connected:
+        try:
+            privacy = client.creator_info().get("privacy_level_options")
+        except UserError:
+            privacy = None
+    return {
+        "settings": ap.model_dump(),
+        "tiktok": {"configured": client.is_configured(), "connected": connected, "privacy_options": privacy},
+        "parts": [{
+            "id": e["id"], "number": e["idx"] + 1, "status": e["status"], "approved": bool(e["approved"]),
+            "scheduled_at": e.get("scheduled_at"), "publish_status": e["publish_status"],
+            "auto": bool((e.get("publish_info") or {}).get("autopublish")),
+            "reminder": (e.get("publish_info") or {}).get("reminder"),
+            "error": (e.get("publish_info") or {}).get("error"),
+        } for e in eps],
+    }
+
+
+@router.get("/{project_id}/autopublish")
+def get_autopublish(project_id: str):
+    return _autopublish_out(get_or_404("projects", project_id, "Проект"))
+
+
+@router.put("/{project_id}/autopublish")
+def put_autopublish(project_id: str, body: AutoPublish):
+    from backend.services import autopublish
+
+    p = get_or_404("projects", project_id, "Проект")
+    if body.enabled:
+        client = pipeline.tiktok_client()
+        if not client.is_configured() or not client.tokens():
+            raise UserError("Сначала подключите аккаунт TikTok: «Настройки» → «TikTok».")
+    settings = dict(p.get("settings") or {})
+    settings["autopublish"] = body.model_dump()
+    db.update("projects", project_id, {"settings": settings, "updated_at": db.now()})
+    if body.enabled:
+        autopublish.apply(project_id, replan=True)
+    else:
+        autopublish.stop(project_id)
+    return _autopublish_out(db.get("projects", project_id))

@@ -288,7 +288,7 @@ def main() -> None:
 
     step("installing over a program folder that is still in use")
     stop_app(proc_b)
-    busy = subprocess.Popen([str(INSTALL / "ffmpeg" / "ffmpeg.exe"), "-v", "error", "-f", "lavfi", "-i",
+    busy = subprocess.Popen([str(INSTALL / "ffmpeg" / "ffmpeg.exe"), "-v", "error", "-re", "-f", "lavfi", "-i",
                              "anullsrc", "-t", "300", "-f", "null", "-"], stdin=subprocess.DEVNULL)
     time.sleep(2)
     check(busy.poll() is None, "bundled ffmpeg.exe is running from the program folder")

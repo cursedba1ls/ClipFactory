@@ -68,6 +68,23 @@ class Banner(BaseModel):
     text_size: int = Field(default=72, ge=20, le=200)
 
 
+class AutoPublish(BaseModel):
+    """Automatic publication of a series through the official TikTok API, part after part."""
+    enabled: bool = False
+    mode: Literal["direct", "inbox"] = "direct"
+    privacy_level: str = Field(default="SELF_ONLY", max_length=40)
+    start_at: Optional[float] = None  # first part (unix time); None = as soon as it is ready
+    interval_minutes: int = Field(default=180, ge=5, le=60 * 24 * 14)
+    # Publish only inside this daily window (local time); equal values = any time.
+    window_start: str = Field(default="10:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    window_end: str = Field(default="23:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    max_per_day: int = Field(default=5, ge=0, le=50)  # 0 = no limit
+    require_approval: bool = True  # publish only parts you approved
+    disable_comment: bool = False
+    disable_duet: bool = False
+    disable_stitch: bool = False
+
+
 class ProjectSettings(BaseModel):
     episode_seconds: float = Field(default=60, ge=5, le=600)
     min_last_seconds: float = Field(default=3, ge=0, le=60)
@@ -75,6 +92,7 @@ class ProjectSettings(BaseModel):
     gameplay_top: bool = False  # gameplay above the cartoon instead of below
     divider: bool = True  # thin black line between the cartoon and the gameplay
     banner: Banner = Field(default_factory=Banner)
+    autopublish: AutoPublish = Field(default_factory=AutoPublish)
     subtitles_enabled: bool = True
     subtitle_style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     numbering: Numbering = Field(default_factory=Numbering)
