@@ -286,8 +286,20 @@ def main() -> None:
           "database backed up before the update")
     proc_b = None
 
-    step("quit and uninstall (keeps user data)")
+    step("installing over a program folder that is still in use")
     stop_app(proc_b)
+    busy = subprocess.Popen([str(INSTALL / "ffmpeg" / "ffmpeg.exe"), "-v", "error", "-f", "lavfi", "-i",
+                             "anullsrc", "-t", "300", "-f", "null", "-"], stdin=subprocess.DEVNULL)
+    time.sleep(2)
+    check(busy.poll() is None, "bundled ffmpeg.exe is running from the program folder")
+    run_installer(setup_b, "install-over-busy")
+    check(busy.wait(timeout=60) is not None, "the installer stopped it instead of failing on a locked file")
+    proc = start_app()
+    wait_app(args.version_b)
+    check(api(f"/api/projects/{p['id']}")["title"] == "Проект E2E", "app works after reinstalling over it")
+
+    step("quit and uninstall (keeps user data)")
+    stop_app(proc)
     uninstaller = INSTALL / "unins000.exe"
     check(uninstaller.is_file(), "uninstaller present")
     subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=300)

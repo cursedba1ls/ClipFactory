@@ -44,7 +44,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 WizardStyle=modern
-CloseApplications=no
+; Restart Manager: programs that still hold files being replaced are closed (also during silent updates).
+CloseApplications=force
 RestartApplications=no
 ShowLanguageDialog=no
 SetupLogging=yes
@@ -122,14 +123,43 @@ begin
   end;
 end;
 
+{ Stop anything still running from the program folder (a ClipFactory that is just starting, its FFmpeg,
+  a leftover helper): otherwise Windows reports "the file is used by another process" while files are
+  replaced. Only processes whose executable lives inside Dir are touched. }
+procedure StopProcessesIn(const Dir: String);
+var
+  ResultCode: Integer;
+  PsDir: String;
+begin
+  if not DirExists(Dir) then
+    Exit;
+  PsDir := AddBackslash(Dir);
+  StringChangeEx(PsDir, '''', '''''', True);
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$d = ''' + PsDir + '''; ' +
+    'Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($d, [System.StringComparison]::OrdinalIgnoreCase) } | ' +
+    'Stop-Process -Force -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log('Stopped leftover processes in ' + Dir + ' (exit code ' + IntToStr(ResultCode) + ')');
+  Sleep(700);
+end;
+
 function InitializeSetup: Boolean;
 begin
   Result := WaitForAppClosed(WizardSilent or IsUpdate);
 end;
 
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  StopProcessesIn(ExpandConstant('{app}'));
+  Result := '';
+end;
+
 function InitializeUninstall: Boolean;
 begin
   Result := WaitForAppClosed(UninstallSilent);
+  if Result then
+    StopProcessesIn(ExpandConstant('{app}'));
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
