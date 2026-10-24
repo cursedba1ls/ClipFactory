@@ -26,13 +26,21 @@ function interceptDownload(e) {
   const isDownload = a.hasAttribute("download") || /\/(download|export)(\?|$)|\/subtitles\.(srt|ass)$/.test(href);
   if (!isDownload || !href.startsWith("/api/")) return;
   e.preventDefault();
-  saveAs(href, a.getAttribute("download") || a.dataset.filename || href.split("/").pop());
+  saveAs(href, a.getAttribute("download") || a.dataset.filename || defaultName(href));
+}
+
+// A file name for the "Save as" dialog when the link does not give one ("download" alone has no extension).
+function defaultName(href) {
+  const path = href.split("?")[0];
+  if (/\/export$/.test(path)) return "ClipFactory.zip";
+  if (/\/download$/.test(path)) return "ClipFactory.mp4";
+  return path.split("/").pop() || "ClipFactory";
 }
 
 export async function saveAs(url, filename) {
   if (!desktop.can_save_dialog) { location.href = url; return; }
   try {
-    const r = await api.post("/api/desktop/save", { url, filename: filename || "ClipFactory" });
+    const r = await api.post("/api/desktop/save", { url, filename: filename || defaultName(url) });
     if (r.saved) toast(`Сохранено: ${r.path}`, "ok", 6000);
   } catch (e) { toastError(e); }
 }

@@ -198,7 +198,7 @@ export async function render(root) {
         settings: { ...form.getValue(), ...(cropEd ? { crop: cropEd.getValue() } : {}) },
         start: true,
       });
-      clearDraft(DRAFT_KEY);
+      discardDraft();
       toast("Проект создан, обработка запущена", "ok");
       location.hash = `#/project/${p.id}`;
     } catch (e) {
@@ -217,8 +217,14 @@ export async function render(root) {
       crop: cropEd ? cropEd.getValue() : cropDraft,
     };
   }
+  let draftDone = false;  // created or discarded: nothing on this page is a draft any more
+  function discardDraft() {
+    draftDone = true;
+    schedulePersist.cancel();
+    return clearDraft(DRAFT_KEY);
+  }
   function persist() {
-    if (!$("#title", root)) return;  // the page was left; never write another page's state
+    if (draftDone || !$("#title", root)) return;  // the page was left; never write another page's state
     const d = currentDraft();
     const empty = !d.title.trim() && !d.main_media_id && !d.gameplay_ids.length;
     if (empty) clearDraft(DRAFT_KEY);
@@ -243,7 +249,11 @@ export async function render(root) {
     banner.innerHTML = `${icon.info}<div class="grow">Восстановлен черновик от ${esc(draftTime(draft))}. Всё, что вы вводили, сохранено.</div>
       <button class="btn sm ghost" type="button" data-fresh>Начать заново</button>`;
     root.querySelector(".page-head").after(banner);
-    banner.querySelector("[data-fresh]").onclick = () => { clearDraft(DRAFT_KEY); location.reload(); };
+    banner.querySelector("[data-fresh]").onclick = async (e) => {
+      e.currentTarget.disabled = true;
+      await discardDraft();
+      location.reload();
+    };
   }
 
   updateButton();

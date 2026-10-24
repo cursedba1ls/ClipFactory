@@ -3,7 +3,7 @@
 The series gets a timetable: the first part at the chosen time (or as soon as it is ready), then one part
 every N minutes, only inside the daily window and at most M parts a day. The scheduler (backend/jobs/
 scheduler.py) publishes each part when its time comes, strictly in order: a part waits until the previous one
-is published, until its video is ready and (unless switched off) until it is approved.
+is published and until its video is ready. Deleted parts are skipped.
 A part TikTok refused for a temporary reason is retried later; parts already published are never touched.
 """
 from __future__ import annotations
@@ -86,7 +86,7 @@ def plan(project: dict, now: float | None = None, replan: bool = True) -> list[t
     """
     ap = settings_of(project)
     now = now or time.time()
-    eps = db.query("episodes", "project_id = ?", (project["id"],), "idx")
+    eps = db.query("episodes", "project_id = ? AND deleted = 0", (project["id"],), "idx")
     fixed = [e for e in eps if e["publish_status"] in FIXED]
     per_day: dict[str, int] = {}
     last = None
@@ -182,8 +182,7 @@ def retry_failed(project: dict, now: float | None = None) -> None:
 
 def waiting_reason(project: dict, e: dict, eps: list[dict], api_ready: bool) -> str | None:
     """Why a due part of an autopublished series cannot go out yet (None = publish now)."""
-    ap = settings_of(project)
-    earlier = [x for x in eps if x["idx"] < e["idx"] and x["publish_status"] not in DONE]
+    earlier = [x for x in eps if x["idx"] < e["idx"] and x["publish_status"] not in DONE and not x.get("deleted")]
     if earlier:
         first = earlier[0]
         if first["publish_status"] == "failed":
@@ -191,8 +190,6 @@ def waiting_reason(project: dict, e: dict, eps: list[dict], api_ready: bool) -> 
         return f"Ждёт публикации части {first['idx'] + 1}."
     if e["status"] != "ready":
         return "Ждёт, пока видео части будет создано."
-    if not e["approved"] and ap.require_approval:
-        return "Ждёт одобрения части."
     if not api_ready:
         return "Аккаунт TikTok не подключён — подключите его в настройках."
     return None

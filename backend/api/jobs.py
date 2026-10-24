@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query
 from backend.api.common import get_or_404, job_out
 from backend.database import db
 from backend.errors import UserError
+from backend.jobs import pipeline
 from backend.jobs.queue import manager
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -31,8 +32,17 @@ def get_job(job_id: str):
 
 @router.post("/{job_id}/cancel")
 def cancel(job_id: str):
-    get_or_404("jobs", job_id, "Задача")
-    return job_out(manager.cancel(job_id))
+    before = get_or_404("jobs", job_id, "Задача")
+    job = manager.cancel(job_id)
+    if before["status"] == "queued" and job and job["status"] == "cancelled":
+        # A queued job never ran, so nothing else would bring its project out of "processing".
+        if job.get("project_id") and job["type"] in ("build_series", "render_episodes"):
+            pipeline.settle_cancelled(job["project_id"])
+        if job["type"] == "tiktok_publish" and job.get("episode_id"):
+            e = db.get("episodes", job["episode_id"])
+            if e and e["publish_status"] == "publishing":
+                db.update("episodes", e["id"], {"publish_status": "not_published", "updated_at": db.now()})
+    return job_out(job)
 
 
 @router.post("/{job_id}/retry")

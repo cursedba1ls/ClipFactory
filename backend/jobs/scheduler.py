@@ -3,10 +3,10 @@
 Every 30 s it checks episodes whose scheduled time has come:
   * a series with automatic publication (backend/services/autopublish.py): new parts get their time, refused
     parts are retried, and the due part goes out through the TikTok API once the previous part is published,
-    its video is ready and it is approved (approval can be switched off for the series);
-  * other parts: approved + API mode + TikTok connected → queue an official API publish job;
+    its video is ready;
+  * other parts: API mode + TikTok connected → queue an official API publish job;
     otherwise → a reminder so the UI prompts the user to upload manually.
-Unapproved episodes are never published unless the series explicitly allows it.
+Deleted parts are never published.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def tick() -> None:
                 autopublish.refresh_publishing(p, client)
 
     due = db.query("episodes", "scheduled_at IS NOT NULL AND scheduled_at <= ? "
-                               "AND publish_status IN ('not_published', 'scheduled', 'failed')", (db.now(),),
+                               "AND deleted = 0 AND publish_status IN ('not_published', 'scheduled', 'failed')", (db.now(),),
                    "project_id, idx")
     if not due:
         return
@@ -56,8 +56,6 @@ def tick() -> None:
                     db.update("episodes", ep["id"], {"publish_info": info})
                 continue
             ap = autopublish.settings_of(project)
-            if not ep["approved"]:
-                db.update("episodes", ep["id"], {"approved": 1})  # the series publishes without approval
             payload = {"mode": ap.mode, "privacy_level": ap.privacy_level, "disable_comment": ap.disable_comment,
                        "disable_duet": ap.disable_duet, "disable_stitch": ap.disable_stitch}
             manager.enqueue("tiktok_publish", project_id=ep["project_id"], episode_id=ep["id"], payload=payload)
@@ -70,10 +68,6 @@ def tick() -> None:
         if info.get("handled_schedule") == ep["scheduled_at"]:
             continue
         info["handled_schedule"] = ep["scheduled_at"]
-        if not ep["approved"]:
-            info["reminder"] = "Время публикации наступило, но часть не одобрена — публикация не выполнена."
-            db.update("episodes", ep["id"], {"publish_info": info})
-            continue
         if ep["publish_mode"] in ("api_direct", "api_inbox") and api_ready and ep["status"] == "ready":
             mode = "direct" if ep["publish_mode"] == "api_direct" else "inbox"
             payload = {"mode": mode, "privacy_level": info.get("privacy_level", "SELF_ONLY")}

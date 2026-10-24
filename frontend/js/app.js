@@ -1,6 +1,6 @@
 // Hash router. Each page exports render(root, params) and may return a cleanup function.
 import { api } from "./api.js";
-import { toast, toastError } from "./ui.js";
+import { esc, toast, toastError } from "./ui.js";
 import { initDesktop } from "./desktop.js";
 import { animateIn, moveNavPill, skeleton } from "./motion.js";
 import * as dashboard from "./pages/dashboard.js";
@@ -25,30 +25,38 @@ const routes = [
 
 let cleanup = null;
 let routeToken = 0;
-const root = document.getElementById("app");
+let root = document.getElementById("app");
 
 async function route() {
   const path = (location.hash || "#/").slice(1).split("?")[0];
   if (cleanup) { try { cleanup(); } catch { /* ignore */ } cleanup = null; }
   root.querySelectorAll("video").forEach((v) => v.pause());
+  // Every page gets a fresh container: listeners a page put on it (clicks, input) leave together with the page,
+  // so a button is never handled by a page that is no longer shown (double dialogs, double requests).
+  const fresh = root.cloneNode(false);
+  root.replaceWith(fresh);
+  root = fresh;
   const match = routes.find(([re]) => re.test(path)) || routes[0];
   const params = path.match(match[0])?.slice(1) || [];
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === match[1]));
   moveNavPill(document.getElementById("nav"));
   const token = ++routeToken;
-  root.innerHTML = "";
+  const pageRoot = root;
   window.scrollTo(0, 0);
   // A page that takes a moment to load its data shows a skeleton instead of an empty screen.
   const skel = setTimeout(() => { if (token === routeToken && !root.childElementCount) root.innerHTML = skeleton(); }, 120);
   try {
-    cleanup = (await match[2].render(root, params)) || null;
+    const done = (await match[2].render(pageRoot, params)) || null;
     clearTimeout(skel);
-    root.querySelector(":scope > .skeleton")?.remove();
-    if (token === routeToken) animateIn(root);
+    if (token !== routeToken) { try { done && done(); } catch { /* ignore */ } return; }  // left while loading
+    cleanup = done;
+    pageRoot.querySelector(":scope > .skeleton")?.remove();
+    animateIn(pageRoot);
   } catch (e) {
     clearTimeout(skel);
+    if (token !== routeToken) return;
     toastError(e);
-    root.innerHTML = `<div class="alert err">${e.message || e}</div>`;
+    pageRoot.innerHTML = `<div class="alert err">${esc(e.message || e)}</div>`;
   }
 }
 
@@ -68,7 +76,7 @@ async function checkReminders() {
     for (const r of d.reminders) {
       if (notified.has(r.episode_id)) continue;
       notified.add(r.episode_id);
-      toast(`Пора опубликовать: «${r.project_title}», часть ${r.number}${r.approved ? "" : " (ещё не одобрена)"}`, "warn", 9000);
+      toast(`Пора опубликовать: «${r.project_title}», часть ${r.number}`, "warn", 9000);
     }
   } catch { /* server may be restarting */ }
 }

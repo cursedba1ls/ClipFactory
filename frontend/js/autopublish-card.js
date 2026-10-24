@@ -42,7 +42,6 @@ export function autopublishCard(box, projectId) {
         <label class="field"><span>Не больше частей в день</span><input type="number" min="0" max="50" data-k="max_per_day" value="${s.max_per_day}" title="0 — без ограничения"></label>
       </div>
       <div class="row mt">
-        <label class="switch"><input type="checkbox" data-k="require_approval" ${s.require_approval ? "checked" : ""}><span class="track"></span><span class="small">Только одобренные части</span></label>
         <label class="switch"><input type="checkbox" data-k="disable_comment" ${s.disable_comment ? "checked" : ""}><span class="track"></span><span class="small">Без комментариев</span></label>
         <label class="switch"><input type="checkbox" data-k="disable_duet" ${s.disable_duet ? "checked" : ""}><span class="track"></span><span class="small">Без дуэтов</span></label>
         <label class="switch"><input type="checkbox" data-k="disable_stitch" ${s.disable_stitch ? "checked" : ""}><span class="track"></span><span class="small">Без стежков</span></label>
@@ -50,7 +49,7 @@ export function autopublishCard(box, projectId) {
         <button class="btn primary" data-ap-save>${s.enabled ? "Сохранить и перестроить расписание" : "Включить автопубликацию"}</button>
       </div>
       <div class="small muted mt-s">Пустое «Первая часть» — как только часть готова. Время «с — до» одинаковое — круглые сутки.
-        Неодобренная или ещё не созданная часть ждёт, следующие части — тоже: порядок серии не нарушается.</div>`;
+        Ещё не созданная часть ждёт, следующие части — тоже: порядок серии не нарушается. Удалённые части пропускаются.</div>`;
   }
 
   function parts(list) {
@@ -91,7 +90,7 @@ export function autopublishCard(box, projectId) {
       start_at: start ? new Date(start).getTime() / 1000 : null,
       interval_minutes: Number(v("interval_minutes").value), window_start: v("window_start").value || "00:00",
       window_end: v("window_end").value || "00:00", max_per_day: Number(v("max_per_day").value) || 0,
-      require_approval: v("require_approval").checked, disable_comment: v("disable_comment").checked,
+      require_approval: false, disable_comment: v("disable_comment").checked,
       disable_duet: v("disable_duet").checked, disable_stitch: v("disable_stitch").checked,
     };
   }

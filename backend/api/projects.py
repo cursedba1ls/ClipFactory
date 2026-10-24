@@ -148,7 +148,8 @@ def approve_all(project_id: str):
 def export_zip(project_id: str):
     p = get_or_404("projects", project_id, "Проект")
     eps = [e for e in db.query("episodes", "project_id = ?", (project_id,), "idx")
-           if e["status"] in ("ready", "outdated") and e.get("video_path") and Path(e["video_path"]).is_file()]
+           if not e.get("deleted") and e["status"] in ("ready", "outdated") and e.get("video_path")
+           and Path(e["video_path"]).is_file()]
     if not eps:
         raise UserError("Нет готовых частей для скачивания.")
     total = db.scalar("SELECT COUNT(*) FROM episodes WHERE project_id = ?", (project_id,))
@@ -190,7 +191,7 @@ def _autopublish_out(p: dict) -> dict:
     from backend.services import autopublish
 
     ap = autopublish.settings_of(p)
-    eps = db.query("episodes", "project_id = ?", (p["id"],), "idx")
+    eps = db.query("episodes", "project_id = ? AND deleted = 0", (p["id"],), "idx")
     client = pipeline.tiktok_client()
     connected = client.is_configured() and bool(client.tokens())
     privacy = None

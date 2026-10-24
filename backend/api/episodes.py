@@ -151,6 +151,8 @@ def _enqueue_render(e: dict) -> dict:
 @router.post("/{episode_id}/render")
 def render(episode_id: str):
     e = get_or_404("episodes", episode_id, "Часть")
+    if e.get("deleted"):
+        raise UserError("Эта часть удалена. Сначала восстановите её.")
     return job_out(_enqueue_render(e))
 
 
@@ -160,6 +162,38 @@ def approve(episode_id: str, body: ApproveIn):
     if body.approved and e["status"] != "ready":
         raise UserError("Одобрить можно только готовую часть с актуальным видео. Сначала пересоздайте её.")
     db.update("episodes", episode_id, {"approved": 1 if body.approved else 0, "updated_at": db.now()})
+    return _out(db.get("episodes", episode_id))
+
+
+@router.delete("/{episode_id}")
+def delete_episode(episode_id: str):
+    """Remove a part from the series: it is hidden, never rendered again and never published.
+    The other parts keep their numbers ("Часть 3/5" is in the video). It can be brought back (restore)."""
+    e = get_or_404("episodes", episode_id, "Часть")
+    if e["publish_status"] == "publishing":
+        raise UserError("Эта часть сейчас публикуется в TikTok. Дождитесь окончания публикации.")
+    for job in db.query("jobs", "type = 'tiktok_publish' AND episode_id = ? AND status IN ('queued','running')",
+                        (episode_id,)):
+        manager.cancel(job["id"])
+    values: dict = {"deleted": 1, "updated_at": db.now()}
+    if e["publish_status"] in ("scheduled", "failed"):
+        values.update({"publish_status": "not_published", "scheduled_at": None})
+    db.update("episodes", episode_id, values)
+    p = db.get("projects", e["project_id"])
+    if p and p["status"] == "error":
+        rest = db.query("episodes", "project_id = ? AND deleted = 0", (e["project_id"],))
+        if rest and all(x["status"] == "ready" for x in rest):
+            db.update("projects", p["id"], {"status": "ready", "error": None, "updated_at": db.now()})
+    return {"ok": True}
+
+
+@router.post("/{episode_id}/restore")
+def restore_episode(episode_id: str):
+    e = get_or_404("episodes", episode_id, "Часть")
+    db.update("episodes", episode_id, {"deleted": 0, "updated_at": db.now()})
+    p = db.get("projects", e["project_id"])
+    if p and p["status"] == "ready" and e["status"] != "ready":
+        db.update("projects", p["id"], {"status": "error", "error": "Не все части созданы", "updated_at": db.now()})
     return _out(db.get("episodes", episode_id))
 
 

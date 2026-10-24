@@ -183,20 +183,32 @@ def _make_episode(project_id: str, idx: int, **kw) -> dict:
     return db.insert("episodes", vals)
 
 
-def test_scheduler_never_publishes_unapproved_and_reminds_manual():
-    from backend.jobs import pipeline  # noqa: F401
+def test_scheduler_publishes_without_approval_and_reminds_manual(monkeypatch):
+    from backend.jobs import pipeline
     from backend.jobs.scheduler import tick
     pid = db.new_id()
     db.insert("projects", {"id": pid, "title": "sched", "created_at": db.now(), "updated_at": db.now()})
     past = db.now() - 60
     unapproved = _make_episode(pid, 0, scheduled_at=past, publish_status="scheduled", publish_mode="api_direct")
     manual = _make_episode(pid, 1, scheduled_at=past, publish_status="scheduled", approved=1)
+    from backend.jobs import scheduler
+
+    class Connected:
+        def is_configured(self):
+            return True
+
+        def tokens(self):
+            return {"access_token": "x"}
+
+    monkeypatch.setattr(pipeline, "tiktok_client", lambda: Connected())
+    queued = []
+    monkeypatch.setattr(scheduler.manager, "enqueue",
+                        lambda *a, **k: (k["project_id"] == pid and queued.append(k)) or {"id": "j"})
     tick()
     u = db.get("episodes", unapproved["id"])
     m = db.get("episodes", manual["id"])
-    assert u["publish_status"] == "scheduled" and "не одобрена" in u["publish_info"]["reminder"]
+    assert u["publish_status"] == "publishing" and [q["episode_id"] for q in queued] == [u["id"]]
     assert m["publish_status"] == "scheduled" and "вручную" in m["publish_info"]["reminder"]
-    assert not db.query("jobs", "type = 'tiktok_publish' AND episode_id IN (?, ?)", (u["id"], m["id"]))
 
 
 def test_manual_publication_marking(client):

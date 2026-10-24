@@ -5,10 +5,13 @@ import { settingsForm } from "../settings-form.js";
 import { desktop, openFolder } from "../desktop.js";
 import { celebrate } from "../motion.js";
 import { autopublishCard } from "../autopublish-card.js";
+import { releaseToTikTok } from "../tiktok-publish.js";
 import {
-  $, $$, badge, confirmDialog, EPISODE_STATUS, esc, fmtDuration, fmtSecondsShort, icon, jobPanel, mediaInfoHtml,
-  modal, plural, PROJECT_STATUS, renderJobs, setHtml, SUB_STATUS, timelineHtml, toast, toastError,
+  $, $$, badge, confirmDialog, EPISODE_STATUS, esc, fmtDuration, fmtSecondsShort, icon, mediaInfoHtml,
+  modal, plural, PROJECT_STATUS, PUBLISH_STATUS, renderJobs, setHtml, SUB_STATUS, timelineHtml, toast, toastError,
 } from "../ui.js";
+
+const PUBLISHED = ["published", "manual", "inbox"];
 
 export async function render(root, [projectId]) {
   let project = await api.get(`/api/projects/${projectId}`);
@@ -24,7 +27,6 @@ export async function render(root, [projectId]) {
         <button class="btn primary" id="build">${icon.play}Создать все части</button>
         <a class="btn" id="zip" href="/api/projects/${esc(projectId)}/export">${icon.download}Скачать все (ZIP)</a>
         <div class="menu"><button class="btn icon" id="more" title="Ещё">${icon.more}</button><div class="menu-list hidden" id="menu">
-          <button data-act="approve-all">${icon.check}Одобрить все готовые части</button>
           <button data-act="rerender">${icon.refresh}Пересоздать все части</button>
           <button data-act="retranscribe">${icon.mic}Распознать речь заново</button>
           <button data-act="captions">${icon.text}Обновить подписи и хештеги</button>
@@ -40,7 +42,8 @@ export async function render(root, [projectId]) {
     <div class="card mt"><div class="card-head"><h2>Таймлайн серии</h2><div class="spacer"></div><span class="hint" id="tl-hint"></span></div><div id="timeline"></div></div>
     <div class="card mt" id="autopub"></div>
     <div class="card-head mt" style="margin-top:26px"><h2>Части</h2><div class="spacer"></div><span class="hint" id="ep-hint"></span></div>
-    <div class="episodes" id="episodes"></div>`;
+    <div class="episodes" id="episodes"></div>
+    <div id="deleted" class="mt"></div>`;
 
   const autopub = autopublishCard($("#autopub", root), projectId);
   let autopubAt = Date.now();
@@ -91,7 +94,7 @@ export async function render(root, [projectId]) {
     const total = project.timeline?.duration;
     setHtml($("#timeline", root), eps.length && total ? timelineHtml(eps, total)
       : `<div class="muted small">Границы частей появятся после анализа видео.</div>`);
-    $("#tl-hint", root).textContent = eps.length ? "Цвет: зелёный — готово, жёлтый — создаётся, синий — нужно пересоздать; полоса снизу — одобрено" : "";
+    $("#tl-hint", root).textContent = eps.length ? "Цвет: зелёный — готово, жёлтый — создаётся, синий — нужно пересоздать" : "";
     $$("[data-seg]", root).forEach((s) => s.onclick = () => {
       const card = document.getElementById(`ep-${s.dataset.seg}`);
       card && card.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -99,7 +102,7 @@ export async function render(root, [projectId]) {
   }
 
   function epKey(e) {
-    return [e.status, e.rendered_at, e.approved, e.subtitle_status, e.error, e.publish_status].join("|");
+    return [e.status, e.rendered_at, e.subtitle_status, e.error, e.publish_status].join("|");
   }
 
   function epCard(e) {
@@ -113,22 +116,25 @@ export async function render(root, [projectId]) {
     } else {
       media = `<div class="placeholder">${icon.clock}<div>Ожидает обработки</div></div>`;
     }
-    const canApprove = e.status === "ready";
-    return `<div class="ep ${e.approved ? "approved" : ""}" id="ep-${esc(e.id)}">
+    const published = PUBLISHED.includes(e.publish_status);
+    const busy = e.publish_status === "publishing";
+    const canRelease = e.status === "ready" && !!e.video_url && !published && !busy;
+    const needsRender = ["error", "outdated"].includes(e.status);
+    return `<div class="ep ${published ? "approved" : ""}" id="ep-${esc(e.id)}">
       <div class="ep-video">${media}</div>
       <div class="ep-body">
         <div class="ep-meta"><span class="ep-num">Часть ${e.number}/${e.total}</span><span class="time" style="margin-left:6px">${fmtDuration(e.start_time)}–${fmtDuration(e.end_time)} · ${fmtSecondsShort(e.duration)}</span></div>
         <div class="ep-meta">${badge(EPISODE_STATUS, e.status)}${badge(SUB_STATUS, e.subtitle_status)}
-          ${e.approved ? '<span class="badge ok">Одобрено</span>' : ""}</div>
+          ${e.publish_status !== "not_published" ? badge(PUBLISH_STATUS, e.publish_status) : ""}</div>
         ${e.status === "error" && e.error ? `<div class="small" style="color:var(--err)">${esc(e.error)}</div>` : ""}
         <div class="ep-actions">
           <button class="btn sm" data-view="${esc(e.id)}" ${e.video_url ? "" : "disabled"}>${icon.play}Просмотр</button>
-          <button class="btn sm" data-edit="${esc(e.id)}">${icon.edit}Редактировать</button>
-          <button class="btn sm" data-render="${esc(e.id)}" ${e.status === "rendering" ? "disabled" : ""}>${icon.refresh}Пересоздать</button>
-          <a class="btn sm ${e.download_url ? "" : "disabled"}" ${e.download_url ? `href="${esc(e.download_url)}"` : 'aria-disabled="true" style="pointer-events:none;opacity:.45"'}>${icon.download}Скачать</a>
-          ${e.approved
-            ? `<button class="btn sm ok wide" data-approve="${esc(e.id)}" data-v="0">${icon.check}Одобрено · отменить</button>`
-            : `<button class="btn sm wide" data-approve="${esc(e.id)}" data-v="1" ${canApprove ? "" : "disabled"}>${icon.check}Одобрить</button>`}
+          <button class="btn sm" data-edit="${esc(e.id)}">${icon.edit}Изменить</button>
+          ${needsRender ? `<button class="btn sm" data-render="${esc(e.id)}">${icon.refresh}Пересоздать</button>` : ""}
+          <button class="btn sm danger" data-del="${esc(e.id)}" ${busy ? "disabled" : ""}>${icon.trash}Удалить</button>
+          ${published
+            ? `<button class="btn sm ok wide" disabled>${icon.check}Опубликовано</button>`
+            : `<button class="btn sm primary wide" data-release="${esc(e.id)}" ${canRelease ? "" : "disabled"}>${icon.upload}${busy ? "Загружается в TikTok…" : "Выпустить в TikTok"}</button>`}
         </div>
       </div></div>`;
   }
@@ -137,7 +143,10 @@ export async function render(root, [projectId]) {
     const box = $("#episodes", root);
     const eps = project.episodes;
     const c = project.counts;
-    $("#ep-hint", root).textContent = c.total ? `Готово ${c.ready} из ${c.total} · одобрено ${c.approved}` : "";
+    $("#ep-hint", root).textContent = c.total ? `Готово ${c.ready} из ${c.total} · опубликовано ${c.published}` : "";
+    const del = project.deleted_parts || [];
+    setHtml($("#deleted", root), del.length ? `<div class="row small muted" style="gap:8px">Удалённые части:
+      ${del.map((d) => `<button class="btn sm ghost" data-restore="${esc(d.id)}" title="Вернуть часть в серию">${icon.undo}Часть ${d.number} · восстановить</button>`).join("")}</div>` : "");
     if (!eps.length) {
       box.innerHTML = `<div class="card" style="grid-column:1/-1"><div class="muted">Части появятся здесь после анализа исходного видео.</div></div>`;
       cardKeys.clear();
@@ -194,24 +203,22 @@ export async function render(root, [projectId]) {
     const t = e.target.closest("button, a");
     if (!t) return;
     const d = t.dataset;
-    if (d.cancel) return act(() => api.post(`/api/jobs/${d.cancel}/cancel`), "Отмена…");
-    if (d.retry) return act(() => api.post(`/api/jobs/${d.retry}/retry`), "Задача запущена повторно");
+    if (d.cancel) { t.disabled = true; return act(() => api.post(`/api/jobs/${d.cancel}/cancel`), "Отменяется…"); }
+    if (d.retry) { t.disabled = true; return act(() => api.post(`/api/jobs/${d.retry}/retry`), "Задача запущена повторно"); }
     if (d.view) return viewEpisode(d.view);
-    if (d.edit) { try { await openEditor(d.edit, reload); } catch (err) { toastError(err); } return; }
+    if (d.edit) return editEpisode(d.edit);
     if (d.render) return act(() => api.post(`/api/episodes/${d.render}/render`), "Часть поставлена на пересоздание");
-    if (d.approve) return act(() => api.post(`/api/episodes/${d.approve}/approve`, { approved: d.v === "1" }));
+    if (d.del) return deleteEpisode(d.del);
+    if (d.release) return release(d.release);
+    if (d.restore) return act(() => api.post(`/api/episodes/${d.restore}/restore`), "Часть возвращена в серию");
     if (d.act) {
       closeMenu();
       switch (d.act) {
         case "folder":
           openFolder(`project:${projectId}`);
           break;
-        case "approve-all":
-          if (await confirmDialog("Одобрить все готовые части?", "Убедитесь, что вы просмотрели каждую часть. Одобренные части можно публиковать.", "Одобрить все"))
-            act(() => api.post(`/api/projects/${projectId}/approve-all`), "Готовые части одобрены");
-          break;
         case "rerender":
-          if (await confirmDialog("Пересоздать все части?", "Все части будут отрисованы заново с текущими настройками. Распознанные субтитры и ваши правки сохранятся. Одобрение будет снято.", "Пересоздать"))
+          if (await confirmDialog("Пересоздать все части?", "Все части будут отрисованы заново с текущими настройками. Распознанные субтитры и ваши правки сохранятся.", "Пересоздать"))
             act(() => api.post(`/api/projects/${projectId}/build`, { rerender_all: true }), "Пересоздание запущено");
           break;
         case "retranscribe":
@@ -234,20 +241,44 @@ export async function render(root, [projectId]) {
     }
   });
 
+  async function editEpisode(id) {
+    try { await openEditor(id, reload); } catch (err) { toastError(err); }
+  }
+
+  async function deleteEpisode(id) {
+    const e = project.episodes.find((x) => x.id === id);
+    if (!e) return;
+    if (!(await confirmDialog(`Удалить часть ${e.number}?`,
+      "Часть исчезнет из серии и не будет опубликована. Номера остальных частей не изменятся. Вернуть её можно кнопкой «восстановить» внизу страницы.",
+      "Удалить", true))) return;
+    act(() => api.del(`/api/episodes/${id}`), `Часть ${e.number} удалена`);
+  }
+
+  function release(id) {
+    const e = project.episodes.find((x) => x.id === id);
+    if (e) releaseToTikTok(e, () => { reload().catch(() => {}); autopub.refresh(); });
+  }
+
   function viewEpisode(id) {
     const e = project.episodes.find((x) => x.id === id);
     if (!e || !e.video_url) return;
+    const published = PUBLISHED.includes(e.publish_status);
+    const canRelease = e.status === "ready" && !published && e.publish_status !== "publishing";
     const m = modal({
       title: `Часть ${e.number}/${e.total}`,
       body: `<div class="player-modal"><video src="${esc(e.video_url)}" controls autoplay playsinline></video></div>
-        ${e.caption ? `<div class="mt small muted">${esc(e.caption)} ${esc(e.hashtags)}</div>` : ""}`,
-      footer: `<a class="btn" href="${esc(e.download_url)}">${icon.download}Скачать</a>
-        ${e.status === "ready" ? (e.approved ? `<button class="btn ok" data-un>${icon.check}Одобрено · отменить</button>` : `<button class="btn primary" data-ok>${icon.check}Одобрить</button>`) : ""}`,
+        ${e.caption || e.hashtags ? `<div class="mt small muted">${esc(e.caption)} ${esc(e.hashtags)}</div>` : ""}
+        ${e.status === "outdated" ? `<div class="alert info small mt">${icon.info}<div>Часть изменена — чтобы выпустить новую версию, нажмите «Изменить» → «Сохранить и пересоздать».</div></div>` : ""}`,
+      footer: `<button class="btn danger" data-del>${icon.trash}Удалить</button>
+        <button class="btn" data-edit>${icon.edit}Изменить</button>
+        ${published ? `<button class="btn ok" disabled>${icon.check}Опубликовано</button>`
+          : `<button class="btn primary" data-release ${canRelease ? "" : "disabled"}>${icon.upload}Выпустить в TikTok</button>`}`,
     });
     m.el.querySelector(".modal").style.maxWidth = "520px";
-    const ok = m.el.querySelector("[data-ok]"), un = m.el.querySelector("[data-un]");
-    if (ok) ok.onclick = async () => { m.close(); act(() => api.post(`/api/episodes/${id}/approve`, { approved: true }), "Часть одобрена"); };
-    if (un) un.onclick = async () => { m.close(); act(() => api.post(`/api/episodes/${id}/approve`, { approved: false })); };
+    m.el.querySelector("[data-del]").onclick = () => { m.close(); deleteEpisode(id); };
+    m.el.querySelector("[data-edit]").onclick = () => { m.close(); editEpisode(id); };
+    const rel = m.el.querySelector("[data-release]");
+    if (rel) rel.onclick = () => { m.close(); release(id); };
   }
 
   async function openSettings() {

@@ -79,7 +79,7 @@ class AutoPublish(BaseModel):
     window_start: str = Field(default="10:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     window_end: str = Field(default="23:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     max_per_day: int = Field(default=5, ge=0, le=50)  # 0 = no limit
-    require_approval: bool = True  # publish only parts you approved
+    require_approval: bool = False  # kept for old saved settings; parts no longer need an approval
     disable_comment: bool = False
     disable_duet: bool = False
     disable_stitch: bool = False

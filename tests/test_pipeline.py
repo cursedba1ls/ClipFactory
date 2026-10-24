@@ -199,12 +199,10 @@ def test_replace_gameplay_without_retranscribing(series_5min, client):
     assert len(TRANSCRIBE_CALLS) == 1
 
 
-def test_approval_and_download(series_5min, client):
+def test_release_without_approval_and_download(series_5min, client):
     ep = series_5min["episodes"][3]
     r = client.post(f"/api/publish/episodes/{ep['id']}/tiktok", json={"mode": "direct"})
-    assert r.status_code == 400 and "одобр" in r.json()["detail"]
-    r = client.post(f"/api/episodes/{ep['id']}/approve", json={"approved": True})
-    assert r.json()["approved"] is True
+    assert "одобр" not in r.json().get("detail", "")  # no approval step any more
     d = client.get(ep["download_url"])
     assert d.status_code == 200 and d.content[4:8] == b"ftyp"
     z = client.get(f"/api/projects/{series_5min['id']}/export")
@@ -230,7 +228,7 @@ def test_recovery_after_interrupted_render(series_5min, client):
                              "payload": {}, "status": "running", "progress": 50, "created_at": t, "updated_at": t})
     manager.recover()
     assert db.get("jobs", job["id"])["status"] in ("queued", "running", "done")
-    assert db.get("episodes", target["id"])["status"] in ("pending", "rendering", "ready")
+    assert db.get("episodes", target["id"])["status"] in ("pending", "outdated", "rendering", "ready")
     result = wait_job(client, job["id"])
     assert result["status"] == "done", result
     for e in db.query("episodes", "project_id = ?", (pid,), "idx"):

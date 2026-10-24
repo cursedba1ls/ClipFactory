@@ -74,7 +74,7 @@ def episode_out(e: dict, total: int, project_title: str | None = None) -> dict:
         "start_time": e["start_time"], "end_time": e["end_time"], "duration": e["duration"],
         "status": e["status"], "subtitle_status": e["subtitle_status"], "error": e.get("error"),
         "cues": e.get("cues") or [], "overrides": e.get("overrides") or {}, "gameplay": e.get("gameplay"),
-        "auto_crop": e.get("auto_crop"),
+        "auto_crop": e.get("auto_crop"), "deleted": bool(e.get("deleted")),
         "verify": e.get("verify"), "approved": bool(e["approved"]),
         "caption": e.get("caption") or "", "hashtags": e.get("hashtags") or "",
         "publish_status": e["publish_status"], "publish_info": e.get("publish_info") or {},
@@ -90,10 +90,11 @@ def episode_out(e: dict, total: int, project_title: str | None = None) -> dict:
 
 
 def project_out(p: dict, full: bool = False) -> dict:
-    eps = db.query("episodes", "project_id = ?", (p["id"],), "idx")
-    total = len(eps)
+    all_eps = db.query("episodes", "project_id = ?", (p["id"],), "idx")
+    total = len(all_eps)  # numbering "Часть N/total" counts deleted parts too (it is burned into the videos)
+    eps = [e for e in all_eps if not e.get("deleted")]
     counts = {
-        "total": total,
+        "total": len(eps),
         "ready": sum(1 for e in eps if e["status"] == "ready"),
         "approved": sum(1 for e in eps if e["approved"]),
         "published": sum(1 for e in eps if e["publish_status"] in ("published", "manual")),
@@ -110,6 +111,7 @@ def project_out(p: dict, full: bool = False) -> dict:
         "main_media_id": p.get("main_media_id"), "gameplay_media_ids": p.get("gameplay_media_ids") or [],
         "created_at": p["created_at"], "updated_at": p["updated_at"], "counts": counts,
         "last_job": job_out(jobs[0]) if jobs else None,
+        "deleted_parts": [{"id": e["id"], "number": e["idx"] + 1} for e in all_eps if e.get("deleted")],
         "active_jobs": [job_out(j) for j in active],
         "thumb_url": thumb,
     }

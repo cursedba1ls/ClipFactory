@@ -104,19 +104,27 @@ def test_new_parts_get_times_automatically(series):
     assert parts[2]["scheduled_at"] == pytest.approx(parts[1]["scheduled_at"] + 3600, abs=1)
 
 
-def test_approval_required_or_automatic(series):
+def test_parts_go_out_without_approval(series):
+    """There is no approval step: even an old series saved with "only approved parts" publishes its parts."""
     make, eps, queued, fake = series
     pid = make({"require_approval": True, "window_start": "00:00", "window_end": "00:00"}, n=1, approved=0)
     autopublish.apply(pid)
     e = eps()[0]
     db.update("episodes", e["id"], {"scheduled_at": db.now() - 1})
     scheduler.tick()
-    assert not queued and "одобрения" in db.get("episodes", e["id"])["publish_info"]["reminder"]
-    p = db.get("projects", pid)
-    p["settings"]["autopublish"]["require_approval"] = False
-    db.update("projects", pid, {"settings": p["settings"]})
+    assert queued and queued[0]["episode_id"] == e["id"]
+
+
+def test_deleted_part_is_skipped(series):
+    make, eps, queued, fake = series
+    pid = make({"window_start": "00:00", "window_end": "00:00", "interval_minutes": 5}, n=2)
+    first, second = eps()
+    db.update("episodes", first["id"], {"deleted": 1})
+    autopublish.apply(pid)
+    assert db.get("episodes", first["id"])["scheduled_at"] is None
+    db.update("episodes", second["id"], {"scheduled_at": db.now() - 1})
     scheduler.tick()
-    assert queued and db.get("episodes", e["id"])["approved"] == 1
+    assert [q["episode_id"] for q in queued] == [second["id"]]  # does not wait for the deleted part
 
 
 def test_waits_for_video_and_tiktok_connection(series):

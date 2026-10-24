@@ -57,7 +57,7 @@ export async function loadDraft(key) {
 
 export function clearDraft(key) {
   mirror(key, null);
-  fetch(`/api/drafts/${encodeURIComponent(key)}`, { method: "DELETE", keepalive: true }).catch(() => {});
+  return fetch(`/api/drafts/${encodeURIComponent(key)}`, { method: "DELETE", keepalive: true }).catch(() => {});
 }
 
 export function draftTime(draft) {
@@ -76,5 +76,7 @@ export function debounce(fn, ms = 400) {
   };
   // Run a pending call now (e.g. when the window is closing).
   d.flush = () => { if (timer) { clearTimeout(timer); timer = null; fn(...lastArgs); } };
+  // Drop a pending call (e.g. the draft was just discarded: it must not be written again).
+  d.cancel = () => { clearTimeout(timer); timer = null; };
   return d;
 }

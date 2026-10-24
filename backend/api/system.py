@@ -84,21 +84,21 @@ def dashboard():
 
     stats = {
         "projects": count("SELECT COUNT(*) FROM projects"),
-        "episodes": count("SELECT COUNT(*) FROM episodes WHERE status IN ('ready','outdated')"),
-        "pending": count("SELECT COUNT(*) FROM episodes WHERE approved = 0 AND publish_status NOT IN "
-                         "('published','manual')"),
-        "approved": count("SELECT COUNT(*) FROM episodes WHERE approved = 1"),
-        "published": count("SELECT COUNT(*) FROM episodes WHERE publish_status IN ('published','manual')"),
+        "episodes": count("SELECT COUNT(*) FROM episodes WHERE deleted = 0 AND status IN ('ready','outdated')"),
+        "pending": count("SELECT COUNT(*) FROM episodes WHERE deleted = 0 AND status = 'ready' AND publish_status "
+                         "NOT IN ('published','manual','inbox','publishing')"),
+        "published": count("SELECT COUNT(*) FROM episodes WHERE deleted = 0 AND "
+                           "publish_status IN ('published','manual','inbox')"),
     }
     recent = [project_out(p) for p in db.query("projects", "", (), "updated_at DESC LIMIT 6")]
     active = [job_out(j) for j in db.query("jobs", "status IN ('queued','running')", (), "created_at")]
     reminders = []
-    for e in db.query("episodes", "scheduled_at IS NOT NULL AND scheduled_at <= ? AND publish_status IN "
+    for e in db.query("episodes", "deleted = 0 AND scheduled_at IS NOT NULL AND scheduled_at <= ? AND publish_status IN "
                                   "('not_published','scheduled')", (db.now(),), "scheduled_at"):
         p = db.get("projects", e["project_id"])
         reminders.append({"episode_id": e["id"], "project_id": e["project_id"],
                           "project_title": p["title"] if p else "", "number": e["idx"] + 1,
-                          "scheduled_at": e["scheduled_at"], "approved": bool(e["approved"])})
+                          "scheduled_at": e["scheduled_at"]})
     return {"stats": stats, "recent_projects": recent, "active_jobs": active, "reminders": reminders}
 
 

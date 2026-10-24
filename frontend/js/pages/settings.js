@@ -163,6 +163,7 @@ export async function render(root) {
   }
   drawData();
 
+  let connectTimer = null;
   function drawTikTok(t) {
     const box = $("#tiktok", root);
     if (!t) { box.innerHTML = `<div class="alert err">Не удалось получить состояние интеграции TikTok.</div>`; return; }
@@ -197,6 +198,18 @@ export async function render(root) {
         drawTikTok(upd);
       } catch (e) { toastError(e); }
     };
+    // Authorisation happens in the browser: watch for the account to appear, then show it here.
+    $("#tt-connect", box).onclick = () => {
+      clearInterval(connectTimer);
+      let left = 100;
+      connectTimer = setInterval(async () => {
+        if (!$("#tiktok", root) || --left < 0) return clearInterval(connectTimer);
+        try {
+          const st = await api.get("/api/publish/tiktok");
+          if (st.connected && !t.connected) { clearInterval(connectTimer); drawTikTok(st); toast("Аккаунт TikTok подключён", "ok"); }
+        } catch { /* keep waiting */ }
+      }, 3000);
+    };
     const dis = $("#tt-disconnect", box);
     if (dis) dis.onclick = async () => { try { drawTikTok(await api.post("/api/publish/tiktok/disconnect")); toast("Аккаунт отключён", "ok"); } catch (e) { toastError(e); } };
   }
@@ -212,6 +225,7 @@ export async function render(root) {
     </dl>` : `<div class="muted">Нет данных</div>`;
 
   return () => {
+    clearInterval(connectTimer);
     scheduleSave.flush();
     window.removeEventListener("pagehide", scheduleSave.flush);
   };

@@ -99,6 +99,7 @@ export function toast(message, type = "info", timeout = 4500) {
 }
 
 export function toastError(e) {
+  if (e && e.stack && !(e.status >= 0)) console.error(e);  // a bug, not a server message: keep the stack in the console
   toast(e?.message || String(e), "err", 7000);
 }
 
@@ -158,7 +159,7 @@ export async function copyText(text, what = "Текст") {
     document.execCommand("copy");
     ta.remove();
   }
-  toast(`${what} скопирован${what.endsWith("и") ? "ы" : ""} в буфер обмена`, "ok", 2500);
+  toast(`${what} — скопировано в буфер обмена`, "ok", 2500);
 }
 
 // ---------- statuses ----------
@@ -227,6 +228,8 @@ export function renderJobs(container, jobs, opts) {
       const a = o.querySelector(sel), b = n.querySelector(sel);
       if (a && b && a.textContent !== b.textContent) a.textContent = b.textContent;
     }
+    const c = o.querySelector("[data-cancel]"), nc = n.querySelector("[data-cancel]");
+    if (c && nc && c.outerHTML !== nc.outerHTML) c.replaceWith(nc);
     const m = o.querySelector(".job-meta"), nm = n.querySelector(".job-meta");
     if (m && nm && m.innerHTML !== nm.innerHTML) m.innerHTML = nm.innerHTML;
   });
@@ -254,7 +257,9 @@ export function jobPanel(job, { showTitle = true } = {}) {
       ${job.status === "queued" ? `<span class="badge">В очереди</span>` : `<div class="spinner" style="width:18px;height:18px;border-width:2.5px"></div>`}
       <span class="job-stage">${esc(job.stage || job.title)}</span>
       <span class="job-pct">${pct}%</span>
-      <button class="btn sm ghost" data-cancel="${esc(job.id)}" title="Отменить">${icon.stop}Отмена</button>
+      ${job.message === "Отмена…"
+        ? `<button class="btn sm ghost" data-cancel="${esc(job.id)}" disabled>${icon.stop}Отменяется…</button>`
+        : `<button class="btn sm ghost" data-cancel="${esc(job.id)}" title="Отменить">${icon.stop}Отмена</button>`}
     </div>
     <div class="progress"><div style="width:${pct}%"></div></div>
     <div class="job-meta">

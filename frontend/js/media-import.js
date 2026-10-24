@@ -87,7 +87,11 @@ export function mediaImport({ kind, title, onChange, initial = null, compact = f
     el.innerHTML = `<div class="small muted">${esc(media.source_url || "")}</div>
       ${media.job ? jobPanel(media.job, { showTitle: false }) : `<div class="row"><div class="spinner"></div><span class="muted">Ожидание загрузки…</span></div>`}`;
     const c = el.querySelector("[data-cancel]");
-    if (c) c.onclick = async () => { await api.post(`/api/jobs/${c.dataset.cancel}/cancel`); refresh(); };
+    if (c) c.onclick = async () => {
+      c.disabled = true;
+      try { await api.post(`/api/jobs/${c.dataset.cancel}/cancel`); } catch (e) { toastError(e); }
+      refresh();
+    };
   }
 
   function drawReady() {

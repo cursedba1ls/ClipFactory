@@ -10,7 +10,7 @@ export function projectCard(p) {
     <div class="info">
       <div class="title" title="${esc(p.title)}">${esc(p.title)}</div>
       <div class="row" style="gap:6px">${badge(PROJECT_STATUS, p.status)}
-        ${c.total ? `<span class="small muted">${c.total} ${plural(c.total, "часть", "части", "частей")} · одобрено ${c.approved}</span>` : ""}</div>
+        ${c.total ? `<span class="small muted">${c.total} ${plural(c.total, "часть", "части", "частей")} · опубликовано ${c.published}</span>` : ""}</div>
       ${job ? `<div class="progress"><div style="width:${Math.round(job.progress)}%"></div></div>
         <div class="small muted">${esc(job.stage || "")} · ${Math.round(job.progress)}%</div>`
         : `<div class="small faint">${fmtDate(p.created_at)}</div>`}
@@ -32,13 +32,13 @@ export async function render(root) {
     const d = await api.get("/api/dashboard");
     const s = d.stats;
     root.querySelector("#stats").innerHTML = [
-      ["Проектов", s.projects], ["Создано частей", s.episodes], ["Ожидают проверки", s.pending, true],
-      ["Одобрено", s.approved], ["Опубликовано", s.published],
+      ["Проектов", s.projects], ["Создано частей", s.episodes], ["Ждут публикации", s.pending, true],
+      ["Опубликовано", s.published],
     ].map(([l, v, a]) => `<div class="stat"><div class="label">${l}</div><div class="value ${a && v ? "accent" : ""}" data-count="${v}" data-key="${l}">${v}</div></div>`).join("");
     root.querySelectorAll("#stats [data-count]").forEach((el) => countUp(el, el.dataset.count, el.dataset.key));
     setHtml(root.querySelector("#reminders"), d.reminders.length ? `<div class="alert warn" style="margin-bottom:16px">${icon.clock}
       <div class="grow"><b>Пора публиковать</b>${d.reminders.map((r) =>
-        `<div><a href="#/publish">«${esc(r.project_title)}» — часть ${r.number}</a>${r.approved ? "" : " · ещё не одобрена"}</div>`).join("")}</div></div>` : "");
+        `<div><a href="#/publish">«${esc(r.project_title)}» — часть ${r.number}</a></div>`).join("")}</div></div>` : "");
     const jobsBox = root.querySelector("#jobs");
     setHtml(jobsBox, d.active_jobs.length ? `<div class="card-head"><h2>Сейчас выполняется</h2></div><div data-job-list></div>` : "");
     renderJobs(jobsBox.querySelector("[data-job-list]"), d.active_jobs);
@@ -69,9 +69,9 @@ export async function render(root) {
 
   root.addEventListener("click", async (e) => {
     const c = e.target.closest("[data-cancel]");
-    if (c) { e.preventDefault(); try { await api.post(`/api/jobs/${c.dataset.cancel}/cancel`); load(); } catch (err) { toastError(err); } }
+    if (c) { e.preventDefault(); c.disabled = true; try { await api.post(`/api/jobs/${c.dataset.cancel}/cancel`); await load(); } catch (err) { toastError(err); } }
     const r = e.target.closest("[data-retry]");
-    if (r) { e.preventDefault(); try { await api.post(`/api/jobs/${r.dataset.retry}/retry`); load(); } catch (err) { toastError(err); } }
+    if (r) { e.preventDefault(); r.disabled = true; try { await api.post(`/api/jobs/${r.dataset.retry}/retry`); await load(); } catch (err) { toastError(err); } }
   });
 
   await load();

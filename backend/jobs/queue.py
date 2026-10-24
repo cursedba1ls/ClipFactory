@@ -82,6 +82,7 @@ class JobManager:
         self._stop = threading.Event()
         self._wake = {lane: threading.Event() for lane in LANES}
         self._running: dict[str, threading.Event] = {}
+        self._cancel_requested: set[str] = set()  # cancelled between claim and start
         self._lock = threading.Lock()
         self.shutting_down = False
         self.finish_hooks: list[Callable[[dict, str, str | None], None]] = []
@@ -95,7 +96,9 @@ class JobManager:
                 "status": "queued", "message": "Возобновлено после перезапуска приложения",
                 "updated_at": db.now(),
             })
-        db.connect().execute("UPDATE episodes SET status = 'pending' WHERE status = 'rendering'")
+        # A part interrupted mid-render keeps showing its previous video (if it had one) until it is made again.
+        db.connect().execute("UPDATE episodes SET status = CASE WHEN video_path IS NOT NULL THEN 'outdated' "
+                             "ELSE 'pending' END WHERE status = 'rendering'")
         db.connect().execute(
             "UPDATE media SET status = 'pending' WHERE status = 'downloading'")
         return len(rows)
@@ -155,11 +158,17 @@ class JobManager:
         if not job:
             return None
         if job["status"] == "queued":
-            db.update("jobs", job_id, {"status": "cancelled", "stage": "Отменено", "finished_at": db.now(),
-                                       "updated_at": db.now()})
-        elif job["status"] == "running":
+            # Only while still queued: a worker may claim the job at this very moment.
+            cur = db.connect().execute(
+                "UPDATE jobs SET status = 'cancelled', stage = 'Отменено', finished_at = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'queued'", (db.now(), db.now(), job_id))
+            if cur.rowcount == 0:
+                job = db.get("jobs", job_id)
+        if job["status"] == "running":
             with self._lock:
                 ev = self._running.get(job_id)
+                if ev is None:
+                    self._cancel_requested.add(job_id)
             if ev:
                 ev.set()
             db.update("jobs", job_id, {"message": "Отмена…", "updated_at": db.now()})
@@ -208,6 +217,9 @@ class JobManager:
         ev = threading.Event()
         with self._lock:
             self._running[job["id"]] = ev
+            if job["id"] in self._cancel_requested:
+                self._cancel_requested.discard(job["id"])
+                ev.set()
         ctx = JobContext(job, ev)
         jt = _types.get(job["type"])
         try:

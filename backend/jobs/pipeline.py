@@ -84,7 +84,12 @@ def process_media(media_id: str, ctx: JobContext | None, p0: float = 0, p1: floa
 
 @register("download", "io", "Загрузка видео")
 def job_download(ctx: JobContext) -> None:
-    process_media(ctx.job["media_id"], ctx, 0, 100)
+    try:
+        process_media(ctx.job["media_id"], ctx, 0, 100)
+    except Cancelled:
+        if not manager.shutting_down:  # closing the app only pauses the download
+            db.update("media", ctx.job["media_id"], {"status": "error", "error": "Загрузка отменена."})
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +242,8 @@ def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: 
         transcript = json.loads(tpath.read_text(encoding="utf-8"))
         if not pending:
             return transcript
+    elif not pending and not force:
+        return None  # every part already has its subtitles (or recognition failed earlier: "Распознать заново")
     else:
         ctx.update(stage="Распознавание речи", progress=p0, message="Подготовка звука…", force=True)
         cache = subtitle_generator.transcript_cache_path(timeline["source_path"], app.whisper_model, lang)
@@ -258,6 +265,19 @@ def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: 
 
                 raw = TRANSCRIBE(wav, model_size=app.whisper_model, language=lang, device=app.whisper_device,
                                  on_progress=on_prog, cancel_event=ctx.cancel_event, duration=timeline["duration"])
+            except UserError as exc:
+                # Subtitles are an extra: a failed recognition (no model, no internet on the first run, a broken
+                # audio track) must not stop the series. The parts are made without subtitles; the user can run
+                # "Распознать речь заново" later. Nothing is cached, so the next attempt recognises again.
+                log.warning("speech recognition failed, parts are made without subtitles: %s | %s",
+                            exc.message, (exc.detail or "")[-500:])
+                _add_warning(project["id"], f"Субтитры не созданы: {exc.message.rstrip('.')}. Части созданы без "
+                                            "субтитров — позже нажмите «Ещё» → «Распознать речь заново» или "
+                                            "добавьте фразы вручную в редакторе части.")
+                for e in pending:
+                    db.update("episodes", e["id"], {"cues": [], "subtitle_status": "empty",
+                                                    "status": _stale_status(e), "updated_at": db.now()})
+                return None
             finally:
                 if not app.keep_temp_files:
                     downloader.remove_quietly(wav)
@@ -283,6 +303,12 @@ def ensure_transcript(project: dict, timeline: dict, episodes: list[dict], ctx: 
     return transcript
 
 
+def _stale_status(e: dict) -> str:
+    """Status of a part whose content changed: its previous video stays visible ("outdated") until re-rendered."""
+    has_video = e["status"] in ("ready", "outdated") and bool(e.get("video_path")) and Path(e["video_path"]).is_file()
+    return "outdated" if has_video else "pending"
+
+
 def _assign_cues(project: dict, episodes: list[dict], transcript: dict, pending: list[dict]) -> None:
     settings = project["settings"]
     words = transcript["words"]
@@ -291,7 +317,7 @@ def _assign_cues(project: dict, episodes: list[dict], transcript: dict, pending:
         cues = subtitle_generator.cues_for_episode(words, e["start_time"], e["end_time"], e["idx"] == 0,
                                                    e["idx"] == n - 1, settings.get("subtitle_style"))
         db.update("episodes", e["id"], {"cues": cues, "subtitle_status": "auto" if cues else "empty",
-                                        "status": "pending", "updated_at": db.now()})
+                                        "status": _stale_status(e), "updated_at": db.now()})
 
 
 def ensure_captions(project: dict, episodes: list[dict], transcript: dict | None, force: bool = False) -> None:
@@ -348,7 +374,7 @@ def ensure_gameplay(project: dict, episodes: list[dict], clips: list[dict]) -> N
     for e in missing:
         c = by_idx[e["idx"]]
         db.update("episodes", e["id"], {"gameplay": {"media_id": c.media_id, "offset": c.offset},
-                                        "status": "pending"})
+                                        "status": _stale_status(e)})
 
 
 def _add_warning(project_id: str, text: str) -> None:
@@ -404,7 +430,10 @@ def render_many(project: dict, episodes: list[dict], timeline: dict, ctx: JobCon
             result = renderer.render_episode(fresh_project, e, total, timeline, gp_media, encoder,
                                              on_progress=on_prog, cancel_event=ctx.cancel_event)
         except Cancelled:
-            db.update("episodes", e["id"], {"status": "pending", "updated_at": db.now()})
+            # The previous video is kept on disk (a new one is written to a temporary file first).
+            had_video = bool(e.get("video_path")) and Path(e["video_path"]).is_file()
+            db.update("episodes", e["id"], {"status": "outdated" if had_video else "pending",
+                                            "updated_at": db.now()})
             raise
         except UserError as exc:
             db.update("episodes", e["id"], {"status": "error", "error": exc.message, "updated_at": db.now()})
@@ -412,6 +441,14 @@ def render_many(project: dict, episodes: list[dict], timeline: dict, ctx: JobCon
                 errors.append(f"Часть {e['idx'] + 1}: {exc.message}")
                 fractions[e["id"]] = 1.0
             log.warning("episode %s failed: %s %s", e["id"], exc.message, (exc.detail or "")[-800:])
+            return
+        except Exception as exc:  # unexpected bug: this part fails, the others are still made
+            log.exception("episode %s crashed", e["id"])
+            msg = f"Внутренняя ошибка: {exc.__class__.__name__}: {exc}"[:300]
+            db.update("episodes", e["id"], {"status": "error", "error": msg, "updated_at": db.now()})
+            with lock:
+                errors.append(f"Часть {e['idx'] + 1}: {msg}")
+                fractions[e["id"]] = 1.0
             return
         # A freshly rendered video has not been reviewed yet: approval is never carried over.
         db.update("episodes", e["id"], {**result, "status": "ready", "error": None, "approved": 0,
@@ -440,10 +477,22 @@ def render_many(project: dict, episodes: list[dict], timeline: dict, ctx: JobCon
 
 
 def _finish_project(project_id: str) -> None:
-    eps = db.query("episodes", "project_id = ?", (project_id,), "idx")
+    eps = db.query("episodes", "project_id = ? AND deleted = 0", (project_id,), "idx")
     status = "ready" if eps and all(e["status"] == "ready" for e in eps) else "error"
     db.update("projects", project_id, {"status": status, "updated_at": db.now(),
                                        "error": None if status == "ready" else "Не все части созданы"})
+
+
+def settle_cancelled(project_id: str) -> None:
+    """After a cancel: "ready" when every part is still ready, otherwise "cancelled" (never stuck "processing")."""
+    if not db.get("projects", project_id):
+        return
+    if db.query("jobs", "project_id = ? AND type IN ('build_series','render_episodes') "
+                        "AND status IN ('queued','running')", (project_id,)):
+        return  # another build of this project is still on its way
+    eps = db.query("episodes", "project_id = ? AND deleted = 0", (project_id,), "idx")
+    status = "ready" if eps and all(e["status"] == "ready" for e in eps) else "cancelled"
+    db.update("projects", project_id, {"status": status, "updated_at": db.now()})
 
 
 @register("build_series", "render", "Создание всех частей")
@@ -504,14 +553,15 @@ def job_build_series(ctx: JobContext) -> None:
             renderer.write_subtitle_files(project, e, len(episodes))
 
         # 8–10. Render every episode that is not ready yet (resumes after restart)
-        todo = [e for e in episodes if rerender_all or e["status"] != "ready"
-                or not e.get("video_path") or not Path(e["video_path"]).is_file()]
+        todo = [e for e in episodes if not e.get("deleted") and (
+                rerender_all or e["status"] != "ready" or not e.get("video_path") or not Path(e["video_path"]).is_file())]
         errors = render_many(project, todo, timeline, ctx, 54, 97)
 
         # 11. Verify outputs
         ctx.update(stage="Проверка результата", progress=98, message="Проверка файлов…", force=True)
         episodes = db.query("episodes", "project_id = ?", (pid,), "idx")
-        missing = [e for e in episodes if e["status"] == "ready" and not Path(e["video_path"] or "").is_file()]
+        missing = [e for e in episodes if not e.get("deleted") and e["status"] == "ready"
+                   and not Path(e["video_path"] or "").is_file()]
         for e in missing:
             db.update("episodes", e["id"], {"status": "error", "error": "Файл части не найден"})
             errors.append(f"Часть {e['idx'] + 1}: файл не найден")
@@ -524,8 +574,11 @@ def job_build_series(ctx: JobContext) -> None:
         ctx.update(stage="Готово", progress=100, message=f"Создано частей: {len(episodes)}", force=True)
     except Cancelled:
         # Closing the app only pauses the work: the job is queued again and resumes on the next start.
-        db.update("projects", pid, {"status": "processing" if manager.shutting_down else "cancelled",
-                                    "updated_at": db.now()})
+        if manager.shutting_down:
+            db.update("projects", pid, {"status": "processing", "updated_at": db.now()})
+        else:
+            db.update("jobs", ctx.id, {"status": "cancelled"})  # so settle_cancelled does not count this job
+            settle_cancelled(pid)
         raise
     except UserError as exc:
         db.update("projects", pid, {"status": "error", "error": exc.message, "updated_at": db.now()})
@@ -541,8 +594,12 @@ def job_render_episodes(ctx: JobContext) -> None:
     if not timeline or not Path(timeline.get("source_path", "")).is_file():
         raise UserError("Исходное видео проекта не найдено. Запустите «Создать все части».")
     ids = ctx.payload.get("episode_ids") or []
-    episodes = [e for e in (db.get("episodes", i) for i in ids) if e and e["project_id"] == project["id"]]
-    if not episodes:
+    episodes = [e for e in (db.get("episodes", i) for i in ids)
+                if e and e["project_id"] == project["id"] and not e.get("deleted")]
+    if not episodes:  # the parts were deleted while the job waited: nothing to do
+        if ids:
+            _finish_project(project["id"])
+            return
         raise UserError("Нет частей для пересоздания.")
     ensure_gameplay(project, db.query("episodes", "project_id = ?", (project["id"],), "idx"),
                     project_gameplay_clips(project))
@@ -550,7 +607,13 @@ def job_render_episodes(ctx: JobContext) -> None:
     db.update("projects", project["id"], {"status": "processing", "updated_at": db.now()})
     n = len(episodes)
     ctx.update(stage="Добавление субтитров", progress=2, message="Обновление субтитров…", force=True)
-    errors = render_many(project, episodes, timeline, ctx, 5, 97)
+    try:
+        errors = render_many(project, episodes, timeline, ctx, 5, 97)
+    except Cancelled:
+        if not manager.shutting_down:
+            db.update("jobs", ctx.id, {"status": "cancelled"})  # so settle_cancelled does not count this job
+            settle_cancelled(project["id"])
+        raise
     ctx.update(stage="Проверка результата", progress=98, force=True)
     _finish_project(project["id"])
     if errors:
@@ -570,10 +633,8 @@ def tiktok_client() -> publisher.TikTokClient:
 @register("tiktok_publish", "io", "Публикация в TikTok")
 def job_tiktok_publish(ctx: JobContext) -> None:
     ep = db.get("episodes", ctx.job["episode_id"])
-    if not ep:
-        raise UserError("Часть не найдена.")
-    if not ep["approved"]:
-        raise UserError("Часть не одобрена. Публикация возможна только после одобрения.")
+    if not ep or ep.get("deleted"):
+        raise UserError("Часть не найдена или удалена.")
     if ep["status"] != "ready" or not ep.get("video_path") or not Path(ep["video_path"]).is_file():
         raise UserError("Видео части ещё не готово.")
     client = tiktok_client()

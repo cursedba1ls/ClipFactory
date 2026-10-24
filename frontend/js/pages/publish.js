@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { releaseToTikTok } from "../tiktok-publish.js";
 import { $, $$, badge, copyText, emptyState, esc, icon, modal, PUBLISH_STATUS, toast, toastError } from "../ui.js";
 
 function toLocalInput(ts) {
@@ -11,15 +12,16 @@ function toLocalInput(ts) {
 export async function render(root) {
   let filter = "all";
   try { filter = localStorage.getItem("cf-publish-filter") || "all"; } catch { /* ignore */ }
+  if (!["all", "unpublished", "published"].includes(filter)) filter = "all";
   let tiktok = null;
   let items = [];
 
   root.innerHTML = `
-    <div class="page-head"><div><h1>Очередь публикаций</h1><div class="sub">Подготовка одобренных частей к публикации в TikTok</div></div></div>
+    <div class="page-head"><div><h1>Очередь публикаций</h1><div class="sub">Готовые части и их публикация в TikTok</div></div></div>
     <div class="card" id="mode"></div>
     <div class="row mt" style="justify-content:space-between">
       <div class="seg" id="filter">
-        <button data-v="all">Все готовые</button><button data-v="approved">Одобренные</button><button data-v="unpublished">Не опубликованные</button>
+        <button data-v="all">Все готовые</button><button data-v="unpublished">Не опубликованные</button><button data-v="published">Опубликованные</button>
       </div>
       <span class="muted small" id="q-count"></span>
     </div>
@@ -44,7 +46,7 @@ export async function render(root) {
         <div class="muted small">Работает всегда и без доступа к API: скачайте MP4, скопируйте подпись и хештеги, откройте официальную страницу загрузки TikTok и отметьте часть как опубликованную.</div></div>
       <div class="stack" style="gap:6px"><h3>Режим B — официальный TikTok API ${connected ? '<span class="badge ok">подключён</span>' : '<span class="badge">не подключён</span>'}</h3>
         <div class="muted small">${connected
-          ? `Аккаунт: <b>${esc(tiktok.user?.display_name || "подключён")}</b>. Публикация только одобренных частей; статус подтверждается ответом TikTok.`
+          ? `Аккаунт: <b>${esc(tiktok.user?.display_name || "подключён")}</b>. Кнопка «Выпустить в TikTok» загружает часть автоматически; статус подтверждается ответом TikTok.`
           : `Требуется собственное приложение в TikTok for Developers с доступом к Content Posting API. Пока приложение не прошло аудит TikTok, прямая публикация доступна только с приватностью «Только я». <a href="#/settings">Настроить</a>`}
         ${tiktok?.error ? `<div style="color:var(--err)">${esc(tiktok.error)}</div>` : ""}</div></div>
       </div>`;
@@ -57,8 +59,8 @@ export async function render(root) {
 
   function visible() {
     return items.filter((e) => {
-      if (filter === "approved") return e.approved;
-      if (filter === "unpublished") return !["published", "manual"].includes(e.publish_status);
+      if (filter === "published") return ["published", "manual", "inbox"].includes(e.publish_status);
+      if (filter === "unpublished") return !["published", "manual", "inbox"].includes(e.publish_status);
       return true;
     });
   }
@@ -69,7 +71,7 @@ export async function render(root) {
     const box = $("#queue", root);
     if (!list.length) {
       box.innerHTML = emptyState("Очередь пуста", filter === "all"
-        ? "Здесь появятся готовые части проектов. Просмотрите и одобрите их на странице проекта."
+        ? "Здесь появятся готовые части проектов."
         : "Нет частей, подходящих под фильтр.");
       return;
     }
@@ -82,7 +84,6 @@ export async function render(root) {
         <div class="stack" style="gap:10px;min-width:0">
           <div class="row" style="gap:8px">
             <a href="#/project/${esc(e.project_id)}"><b>${esc(e.project_title)}</b></a><span class="muted">— часть ${e.number}/${e.total}</span>
-            ${e.approved ? '<span class="badge ok">Одобрено</span>' : '<span class="badge warn">Не одобрено</span>'}
             ${e.status === "outdated" ? '<span class="badge info">Нужно пересоздать</span>' : ""}
             ${badge(PUBLISH_STATUS, e.publish_status)}
             <div style="flex:1"></div>
@@ -111,8 +112,7 @@ export async function render(root) {
             <button class="btn sm" data-copy-tags>${icon.copy}Копировать хештеги</button>
             <a class="btn sm" href="${esc(tiktok?.manual_upload_url || "https://www.tiktok.com/tiktokstudio/upload")}" target="_blank" rel="noopener">${icon.external}Открыть TikTok</a>
             ${published ? `<button class="btn sm ghost" data-unmark>Снять отметку</button>` : `<button class="btn sm" data-mark>${icon.check}Отметить опубликованным</button>`}
-            ${!e.approved && e.status === "ready" ? `<button class="btn sm" data-approve>${icon.check}Одобрить</button>` : ""}
-            ${connected && e.approved && e.status === "ready" && !published ? `<button class="btn sm primary" data-api>${icon.upload}Опубликовать через API</button>` : ""}
+            ${e.status === "ready" && !published && e.publish_status !== "publishing" ? `<button class="btn sm primary" data-api>${icon.upload}Выпустить в TikTok</button>` : ""}
             ${info.publish_id && !["published", "failed"].includes(e.publish_status) ? `<button class="btn sm ghost" data-refresh>${icon.refresh}Обновить статус</button>` : ""}
           </div>
           ${info.message || info.error || info.manual_url ? `<div class="small muted">${esc(info.error || info.message || "")}
@@ -143,20 +143,32 @@ export async function render(root) {
       const mark = $("[data-mark]", row);
       if (mark) mark.onclick = () => markPublished(id);
       const unmark = $("[data-unmark]", row);
-      if (unmark) unmark.onclick = async () => { await api.post(`/api/episodes/${id}/mark-published`, { published: false }); loadQueue(); };
-      const appr = $("[data-approve]", row);
-      if (appr) appr.onclick = async () => { try { await api.post(`/api/episodes/${id}/approve`, { approved: true }); toast("Часть одобрена", "ok"); loadQueue(); } catch (err) { toastError(err); } };
+      if (unmark) unmark.onclick = async () => {
+        try { await api.post(`/api/episodes/${id}/mark-published`, { published: false }); } catch (err) { toastError(err); }
+        loadQueue().catch(toastError);
+      };
       const apiBtn = $("[data-api]", row);
-      if (apiBtn) apiBtn.onclick = () => publishViaApi(e);
+      if (apiBtn) apiBtn.onclick = () => releaseToTikTok(e, () => loadQueue().catch(() => {}));
       const ref = $("[data-refresh]", row);
       if (ref) ref.onclick = async () => { try { await api.post(`/api/publish/episodes/${id}/refresh`); loadQueue(); } catch (err) { toastError(err); } };
       const move = async (dir) => {
         const ids = list.map((x) => x.id);
         const i = ids.indexOf(id), j = i + dir;
         if (j < 0 || j >= ids.length) return;
-        [ids[i], ids[j]] = [ids[j], ids[i]];
-        await api.post("/api/publish/queue/order", { episode_ids: ids });
-        loadQueue();
+        const a = list[i], b = list[j];
+        try {
+          if (a.scheduled_at && b.scheduled_at) {
+            // Scheduled parts are ordered by their time: moving a part swaps the two publication times.
+            await api.patch(`/api/episodes/${a.id}`, { scheduled_at: b.scheduled_at });
+            await api.patch(`/api/episodes/${b.id}`, { scheduled_at: a.scheduled_at });
+          } else if (!a.scheduled_at && !b.scheduled_at) {
+            [ids[i], ids[j]] = [ids[j], ids[i]];
+            await api.post("/api/publish/queue/order", { episode_ids: ids });
+          } else {
+            return toast("Запланированные части идут по времени публикации. Измените дату или снимите её.", "info");
+          }
+          await loadQueue();
+        } catch (err) { toastError(err); }
       };
       $("[data-up]", row).onclick = () => move(-1);
       $("[data-down]", row).onclick = () => move(1);
@@ -177,50 +189,6 @@ export async function render(root) {
         m.close();
         loadQueue();
       } catch (e) { toastError(e); }
-    };
-  }
-
-  async function publishViaApi(e) {
-    let creator = null;
-    try { creator = await api.get("/api/publish/tiktok/creator-info"); } catch (err) { return toastError(err); }
-    const opts = creator.privacy_level_options || ["SELF_ONLY"];
-    const m = modal({
-      title: `Публикация через TikTok API — часть ${e.number}/${e.total}`,
-      body: `<div class="stack">
-        <div class="seg" data-mode><button data-v="direct" class="on">Опубликовать</button><button data-v="inbox">Отправить во «Входящие»</button></div>
-        <div class="small muted" data-mode-note>Видео будет опубликовано в аккаунте ${esc(creator.creator_nickname || "")}. Успех фиксируется только после подтверждения TikTok.</div>
-        <label class="field" data-privacy-wrap><span>Кто может смотреть</span><select data-privacy>${opts.map((o) =>
-          `<option value="${esc(o)}">${esc((creator.privacy_names || {})[o] || o)}</option>`).join("")}</select></label>
-        <div class="row" data-toggles>
-          <label class="switch"><input type="checkbox" data-nc ${creator.comment_disabled ? "checked disabled" : ""}><span class="track"></span><span class="small">Запретить комментарии</span></label>
-          <label class="switch"><input type="checkbox" data-nd ${creator.duet_disabled ? "checked disabled" : ""}><span class="track"></span><span class="small">Запретить дуэты</span></label>
-          <label class="switch"><input type="checkbox" data-ns ${creator.stitch_disabled ? "checked disabled" : ""}><span class="track"></span><span class="small">Запретить склейки</span></label>
-        </div>
-        <div class="alert info small">${icon.info}<div>Подпись: ${esc(e.caption)} ${esc(e.hashtags)}</div></div>
-      </div>`,
-      footer: `<button class="btn" data-c>Отмена</button><button class="btn primary" data-go>${icon.upload}Опубликовать</button>`,
-    });
-    let mode = "direct";
-    $$("[data-mode] button", m.el).forEach((b) => b.onclick = () => {
-      mode = b.dataset.v;
-      $$("[data-mode] button", m.el).forEach((x) => x.classList.toggle("on", x === b));
-      $("[data-privacy-wrap]", m.el).classList.toggle("hidden", mode !== "direct");
-      $("[data-toggles]", m.el).classList.toggle("hidden", mode !== "direct");
-      $("[data-mode-note]", m.el).textContent = mode === "direct"
-        ? "Видео будет опубликовано сразу. Успех фиксируется только после подтверждения TikTok."
-        : "Видео попадёт во «Входящие» приложения TikTok — завершите публикацию в приложении.";
-    });
-    $("[data-c]", m.el).onclick = m.close;
-    $("[data-go]", m.el).onclick = async () => {
-      try {
-        await api.post(`/api/publish/episodes/${e.id}/tiktok`, {
-          mode, privacy_level: $("[data-privacy]", m.el).value,
-          disable_comment: $("[data-nc]", m.el).checked, disable_duet: $("[data-nd]", m.el).checked, disable_stitch: $("[data-ns]", m.el).checked,
-        });
-        toast("Публикация запущена. Статус обновится после ответа TikTok.", "ok");
-        m.close();
-        loadQueue();
-      } catch (err) { toastError(err); }
     };
   }
 

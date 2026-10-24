@@ -165,9 +165,10 @@ def connect() -> sqlite3.Connection:
 
 # Columns added after the first release. Only ever append: an update must open every older database.
 MIGRATIONS = [("episodes", "auto_crop", "TEXT"), ("media", "trim_start", "REAL"), ("media", "trim_end", "REAL"),
-              ("media", "fetch_start", "REAL"), ("media", "fetch_end", "REAL")]
+              ("media", "fetch_start", "REAL"), ("media", "fetch_end", "REAL"),
+              ("episodes", "deleted", "INTEGER NOT NULL DEFAULT 0")]
 # PRAGMA user_version: bump together with MIGRATIONS / new tables.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def schema_version() -> int:

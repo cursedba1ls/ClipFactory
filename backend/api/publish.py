@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/publish", tags=["publish"])
 
 @router.get("/queue")
 def queue():
-    eps = db.query("episodes", "status IN ('ready','outdated') OR publish_status != 'not_published'", (),
+    eps = db.query("episodes", "deleted = 0 AND (status IN ('ready','outdated') OR publish_status != 'not_published')", (),
                    "CASE WHEN scheduled_at IS NULL THEN 1 ELSE 0 END, scheduled_at, publish_order, idx")
     projects = {p["id"]: p for p in db.query("projects")}
     totals: dict[str, int] = {}
@@ -129,7 +129,7 @@ def tiktok_callback(code: str | None = Query(default=None, max_length=2000),
         tiktok_client().exchange_code(code, state)
     except UserError as exc:
         return _page("Ошибка подключения", html.escape(exc.message))
-    return _page("Аккаунт TikTok подключён", "Теперь можно публиковать одобренные части через официальный API.")
+    return _page("Аккаунт TikTok подключён", "Теперь части можно выпускать в TikTok прямо из ClipFactory — кнопкой «Выпустить в TikTok» или по расписанию.")
 
 
 @router.post("/tiktok/disconnect")
@@ -151,8 +151,12 @@ def tiktok_creator_info():
 @router.post("/episodes/{episode_id}/tiktok")
 def publish_episode(episode_id: str, body: TikTokPublishIn):
     e = get_or_404("episodes", episode_id, "Часть")
-    if not e["approved"]:
-        raise UserError("Сначала одобрите часть. Публикация без одобрения невозможна.")
+    if e.get("deleted"):
+        raise UserError("Эта часть удалена.")
+    if e["publish_status"] == "publishing":
+        raise UserError("Эта часть уже публикуется.")
+    if e["publish_status"] in ("published", "inbox"):
+        raise UserError("Эта часть уже отправлена в TikTok.")
     if e["status"] != "ready":
         raise UserError("Видео части не готово или устарело. Пересоздайте его.")
     client = tiktok_client()
